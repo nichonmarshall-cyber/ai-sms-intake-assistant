@@ -352,7 +352,7 @@ Use `flask-limiter` per phone number instead of only per IP.
 
 ## Bottom Line
 
-This is a solid first version of a real service product.
+This is the fourth major iteration of the project and the first version that successfully connects the full workflow end-to-end.
 It is not just a chatbot. It is an intake workflow.
 
 The next level is not more features. It is reliability.
