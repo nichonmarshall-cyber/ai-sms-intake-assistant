@@ -1,0 +1,7 @@
+flask==3.0.3
+twilio==9.3.2
+openai==1.35.13
+gspread==6.1.2
+google-auth==2.30.0
+python-dotenv==1.0.1
+flask-limiter==3.7.0
