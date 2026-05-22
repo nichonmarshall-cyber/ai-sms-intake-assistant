@@ -319,7 +319,7 @@ Unsafe or out-of-scope behavior triggers termination with a safe closing message
 
 ## Current Limitations
 
-Be honest about this part, because it matters in production.
+I'll Be honest about this part, because it matters in production.
 
 - Session state is in memory, so restarts wipe active conversations
 - Google Sheets logging is simple and not built for high volume
