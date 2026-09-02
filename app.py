@@ -177,6 +177,19 @@ def _handle_sms(db, phone: str, body: str, message_sid: str):
     if classification == "help":
         return _finalize(db, phone, message_sid, compliance.HELP_REPLY)
 
+    # Keep a recently completed intake available for natural follow-up instead
+    # of treating the next text as a brand-new customer. MENU still starts a
+    # fresh demo explicitly, and TTL expiry eventually clears the session.
+    if session.terminated:
+        if APP_CONFIG.is_demo and body.strip().upper() in MID_FLOW_RESET_KEYWORDS:
+            conversation_store.reset_to_menu(db, session)
+            reply = menu_text.build_menu_text(ENABLED_PROFILES)
+        else:
+            reply = menu_text.build_completed_followup_text(body, APP_CONFIG.is_demo)
+        conversation_store.add_assistant_message(db, session, reply)
+        conversation_store.touch(db, session)
+        return _finalize(db, phone, message_sid, reply)
+
     # --- Brand-new session: greeting / menu, no LLM call yet ---------------
     if is_new:
         if APP_CONFIG.is_demo:

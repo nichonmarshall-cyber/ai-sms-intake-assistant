@@ -74,3 +74,24 @@ def build_completion_text(fields: dict, is_demo: bool) -> str:
     if is_demo:
         return f"{reply} Demo only; nothing was booked or sent to a real business."
     return reply
+
+
+def build_completed_followup_text(body: str, is_demo: bool) -> str:
+    """Answer common follow-ups without silently starting a new intake."""
+    normalized = (body or "").lower()
+    asks_price = any(word in normalized for word in ("price", "cost", "quote", "estimate", "how much"))
+
+    if asks_price:
+        if is_demo:
+            return (
+                "Pricing depends on the job, so in a live setup the team would go over "
+                "that during follow-up. Demo only; nothing was booked. Reply MENU to try another."
+            )
+        return (
+            "Pricing depends on the job, so the team will go over that when they call. "
+            "We already have your information."
+        )
+
+    if is_demo:
+        return "That demo intake is complete. Nothing was booked. Reply MENU to try another."
+    return "We already have your information. The team will follow up soon."

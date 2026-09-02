@@ -168,3 +168,23 @@ def test_application_forces_completion_when_final_field_is_collected(demo_app):
     assert "5pm" in body
     assert "demo" in body.lower()
     assert _get_session(phone).terminated is True
+
+
+def test_pricing_followup_after_completion_does_not_restart_menu(demo_app):
+    phone = "+15553330006"
+    _select_profile(demo_app, phone)
+    profile = PROFILES["auto_repair"]
+    complete_fields = {f.key: "answer" for f in profile.fields}
+
+    with patch(
+        "modules.openai_helper.get_ai_response",
+        return_value=fake_ai_result(profile, extracted_fields=complete_fields),
+    ):
+        send_sms(demo_app, phone, "final answer")
+
+    code, body = send_sms(demo_app, phone, "How much would this cost?")
+
+    assert code == 200
+    assert "Pricing depends on the job" in body
+    assert "live setup" in body
+    assert "Choose: 1 Auto Repair" not in body

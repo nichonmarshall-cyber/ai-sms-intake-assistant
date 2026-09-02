@@ -76,9 +76,10 @@ def get_or_create_session(
     default_profile_key: str | None,
 ) -> tuple[ConversationSession, bool]:
     """
-    Returns (session, is_new). A session is considered "new" both when no
-    row exists yet and when the existing row has expired (TTL elapsed) or
-    was already terminated — in both cases a fresh row replaces it.
+    Returns (session, is_new). A session is considered "new" when no row
+    exists or the existing row has expired. Completed sessions remain available
+    until TTL expiry so immediate follow-up questions do not unexpectedly start
+    a brand-new intake.
     """
     phone = normalize_phone(phone)
     now = datetime.now(timezone.utc)
@@ -87,14 +88,14 @@ def get_or_create_session(
         select(ConversationSession).where(ConversationSession.phone == phone)
     ).scalar_one_or_none()
 
-    expired = existing is not None and (_as_aware_utc(existing.expires_at) < now or existing.terminated)
+    expired = existing is not None and _as_aware_utc(existing.expires_at) < now
 
     if existing is not None and not expired:
         return existing, False
 
     carried_opt_out = False
     if existing is not None and expired:
-        logger.info(f"[conversation_store] Session expired/terminated for {phone} — starting fresh.")
+        logger.info(f"[conversation_store] Session expired for {phone} — starting fresh.")
         carried_opt_out = existing.opted_out  # opt-out survives session TTL/reset
         db.delete(existing)
         db.flush()

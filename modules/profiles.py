@@ -102,8 +102,9 @@ ROOFING = Profile(
     industry_instructions=(
         "You help customers describe a roofing need so a roofer can follow up.\n"
         "Ask about the property location, the type of service needed (leak, damage, "
-        "inspection, replacement, other), when the issue began, and whether there is "
-        "active leaking or emergency damage right now."
+        "inspection, replacement, other), when the issue began, and whether water is "
+        "actively leaking right now. Treat 'inspect' or 'inspection' as a complete "
+        "answer for service type even when the customer also mentions a possible leak."
     ),
     categories=(
         "leak_repair", "storm_damage", "inspection", "replacement",
@@ -112,9 +113,9 @@ ROOFING = Profile(
     fields=(
         FieldSpec("customer_name", "Customer Name", "What's your name?"),
         FieldSpec("property_location", "Property Location", "What's the property address or location?"),
-        FieldSpec("service_type", "Service Type", "Is this a leak, storm damage, an inspection, a replacement, or something else?"),
+        FieldSpec("service_type", "Service Type", "What would you like the roofer to check or help with?"),
         FieldSpec("issue_started", "When It Began", "When did this issue start?"),
-        FieldSpec("is_active_emergency", "Active Leak / Emergency?", "Is there active leaking or emergency damage right now?"),
+        FieldSpec("is_active_leak", "Active Leak?", "Is water actively leaking right now?"),
         FieldSpec("roof_type", "Roof Type", "Do you know the roof type (shingle, metal, tile, flat, etc.)?", required=False),
         FieldSpec("preferred_callback_time", "Preferred Callback Time", "What's the best time to call you back?"),
     ),
