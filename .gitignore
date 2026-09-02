@@ -2,3 +2,26 @@
 venv/
 __pycache__/
 *.pyc
+*.pyo
+
+# Local/test databases -- never committed, never relied on in deployment
+*.db
+*.db-journal
+*.sqlite
+*.sqlite3
+
+# Google service account credentials
+credentials/
+*service_account*.json
+
+# Test/tooling artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+
+# Editor/OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

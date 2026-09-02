@@ -1,19 +1,19 @@
 """
 app.py
-SMS Intake Assistant — Flask entry point.
+SMS Intake Assistant -- Flask entry point.
 
 Routes:
-  POST /sms    — Twilio inbound SMS webhook (main intake flow)
-  POST /reset  — Clear one or all sessions (development/testing)
-  GET  /health — Liveness check
+  POST /sms    - Twilio inbound SMS webhook (main intake flow)
+  POST /reset  - Clear one or all sessions (development/testing)
+  GET  /health - Liveness check
 
-Fixes applied:
-  - Rate limiter keyed on Twilio "From" phone number, not IP address
-  - All outbound replies (AI, greeting, max-turns, fallback) pass through
-    _safe_reply(), which enforces the MAX_REPLY_LENGTH cap uniformly
-  - Off-topic strikes reset when user returns to on-topic conversation
-  - max_turns fallback category = "unknown"
-  - Startup env var check warns on missing required vars (no crash)
+Supports two modes (see modules/app_mode.py):
+  APP_MODE=demo       - NTX Automation Co. multi-industry demo, menu-driven.
+  APP_MODE=production - locked to a single client profile (DEFAULT_PROFILE).
+
+State is persisted in PostgreSQL/SQLite via modules/conversation_store.py --
+nothing customer-facing lives only in process memory, so a restart never
+loses an active conversation.
 """
 
 import os
@@ -25,217 +25,320 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ─── Logging setup ────────────────────────────────────────────────────────────
+# --- Logging setup -------------------------------------------------------
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
 )
 logger = logging.getLogger(__name__)
 
-# ─── Startup env var check ────────────────────────────────────────────────────
-_REQUIRED_ENV_VARS = [
-    "OPENAI_API_KEY",
-    "TWILIO_ACCOUNT_SID",
-    "TWILIO_AUTH_TOKEN",
-    "TWILIO_PHONE_NUMBER",
-    "BUSINESS_NAME",
-    "BUSINESS_TYPE",
-]
+# --- App-mode boundary: fails loudly at startup on misconfiguration ------
+from modules.app_mode import validate_startup, AppModeConfigError
+
+try:
+    APP_CONFIG = validate_startup()
+except AppModeConfigError as e:
+    logger.error(f"[app] FATAL startup configuration error: {e}")
+    raise
+
+# --- Startup env var check (warns, does not crash) ------------------------
+_REQUIRED_ENV_VARS = ["OPENAI_API_KEY", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"]
+
 
 def _check_env_vars() -> None:
     missing = [v for v in _REQUIRED_ENV_VARS if not os.getenv(v, "").strip()]
     if missing:
         for var in missing:
             logger.warning(f"[app] Missing required environment variable: {var}")
-        logger.warning(
-            "[app] Some required env vars are not set. "
-            "The app will start but may behave incorrectly."
-        )
+        logger.warning("[app] Some required env vars are not set. The app will start but may behave incorrectly.")
+
 
 _check_env_vars()
 
-# ─── Flask setup ──────────────────────────────────────────────────────────────
-app = Flask(__name__)
+# --- Module imports (after load_dotenv so env vars are available) --------
+from modules import conversation_store, compliance, intake_engine, menu_text, openai_helper, sheets_helper, twilio_helper
+from modules.business_hours import get_greeting, is_business_hours
+from modules.profiles import PROFILES, match_menu_selection
+from modules.db import init_db, session_scope, get_database_url, is_sqlite
 
-# Rate limit keyed on the Twilio "From" phone number.
-# Falls back to IP if "From" is not present (e.g. health checks).
+# --- Database setup --------------------------------------------------------
+_db_url = get_database_url()
+if is_sqlite(_db_url):
+    logger.info(f"[app] Using SQLite ({_db_url}) -- dev/test only. Auto-creating tables.")
+    init_db()
+else:
+    logger.info("[app] Using external database. Run `alembic upgrade head` to apply migrations.")
+
+# --- Flask setup -------------------------------------------------------------
+app = Flask(__name__)
+app.config["SECRET_KEY"] = os.getenv("SECRET_KEY", "")
+if not app.config["SECRET_KEY"]:
+    logger.warning("[app] SECRET_KEY is not set. Set it before deploying to production.")
+
+
 def _rate_limit_key() -> str:
     return request.form.get("From") or get_remote_address()
+
 
 limiter = Limiter(
     _rate_limit_key,
     app=app,
-    default_limits=[],       # No blanket limit — applied per-route only
+    default_limits=[],
     storage_uri="memory://",
 )
 
-# ─── Module imports after load_dotenv so env vars are available ───────────────
-from modules import conversation, openai_helper, sheets_helper, twilio_helper
-from modules.business_hours import get_greeting
-
-# ─── Constants ────────────────────────────────────────────────────────────────
-# All outbound SMS replies are truncated to this length, without exception.
 MAX_REPLY_LENGTH = 500
 
-MAX_TURNS_REPLY = (
-    "We've reached the limit of what we can collect over text. "
-    "The team will follow up with you directly — thanks!"
-)
+ENABLED_PROFILES = [PROFILES[k] for k in APP_CONFIG.enabled_profile_keys]
+MID_FLOW_RESET_KEYWORDS = {"MENU", "DEMO"}  # START is handled as a compliance keyword
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# /sms  — main Twilio webhook
-# ─────────────────────────────────────────────────────────────────────────────
+def _business_name() -> str:
+    return "NTX Automation Co." if APP_CONFIG.is_demo else os.getenv("BUSINESS_NAME", "our business")
+
+
+def _max_turns_reply() -> str:
+    return menu_text.MAX_TURNS_REPLY_DEMO if APP_CONFIG.is_demo else menu_text.MAX_TURNS_REPLY_PRODUCTION
+
+
+# -----------------------------------------------------------------------------
+# /sms -- main Twilio webhook
+# -----------------------------------------------------------------------------
 
 @app.route("/sms", methods=["POST"])
 @limiter.limit("10 per minute")
 def sms_intake():
-    """
-    Receives inbound SMS from Twilio and drives the intake conversation.
-
-    Flow:
-      1.  Validate Twilio webhook signature (prod only)
-      2.  Extract phone number + message body
-      3.  New session  → send greeting, return early
-      4.  Terminated   → ignore silently (204)
-      5.  Max turns    → close gracefully, log lead
-      6.  Add user message → call OpenAI → validate response
-      7.  Merge extracted fields into session state
-      8.  Track off-topic strikes / reset on recovery
-      9.  If should_terminate → log lead → mark session closed
-      10. Return reply via _safe_reply() (truncation applied here)
-    """
-
-    # 1. Signature validation (skipped in development)
     twilio_helper.validate_twilio_request()
 
-    # 2. Extract inbound data
     phone = request.form.get("From", "").strip()
-    body  = request.form.get("Body", "").strip()
+    body = request.form.get("Body", "").strip()
+    message_sid = request.form.get("MessageSid", "").strip()
 
     if not phone or not body:
         logger.warning("[app] Received request with missing From or Body.")
         return "", 400
 
-    logger.info(f"[app] Inbound from {phone}: {body!r}")
+    logger.info(f"[app] Inbound from {phone}: {len(body)} chars")
 
-    # 3. New session → greeting
-    if not conversation.session_exists(phone):
-        conversation.get_session(phone)          # initialise
-        greeting = get_greeting()
-        conversation.add_assistant_message(phone, greeting)
-        logger.info(f"[app] Greeting sent to {phone}")
-        return _safe_reply(greeting)
+    try:
+        db = session_scope()
+    except Exception:
+        logger.exception("[app] Database connection failure.")
+        return "", 500
 
-    # 4. Already terminated → no reply
-    if conversation.is_terminated(phone):
-        logger.info(f"[app] Message from closed session {phone} — ignored.")
+    try:
+        return _handle_sms(db, phone, body, message_sid)
+    except Exception:
+        logger.exception(f"[app] Unhandled error processing message from {phone}.")
+        xml = twilio_helper.build_twiml_response(
+            "Sorry, we ran into an issue on our end. The team will follow up with you directly."
+        )
+        return xml, 200, {"Content-Type": "text/xml"}
+    finally:
+        db.close()
+
+
+def _handle_sms(db, phone: str, body: str, message_sid: str):
+    # --- Idempotency: replay identical response for a retried MessageSid ---
+    existing = conversation_store.find_processed_message(db, message_sid)
+    if existing is not None:
+        logger.info(f"[app] Duplicate MessageSid {message_sid} -- replaying prior response.")
+        if not existing.response_body:
+            return "", 204
+        return existing.response_body, 200, {"Content-Type": "text/xml"}
+
+    session, is_new = conversation_store.get_or_create_session(
+        db, phone,
+        is_demo=APP_CONFIG.is_demo,
+        default_profile_key=APP_CONFIG.default_profile_key,
+    )
+
+    # --- Compliance keywords: processed before menu logic or the LLM -------
+    classification = compliance.classify(body)
+
+    if classification == "stop":
+        conversation_store.mark_opted_out(db, session, True)
+        return _finalize(db, phone, message_sid, compliance.STOP_REPLY)
+
+    if session.opted_out and classification != "start":
+        conversation_store.record_processed_message(db, message_sid, phone, "")
         return "", 204
 
-    # 5. Max turns → close gracefully
-    if conversation.is_at_max_turns(phone):
+    if classification == "start":
+        conversation_store.mark_opted_out(db, session, False)
+        if APP_CONFIG.is_demo:
+            conversation_store.reset_to_menu(db, session)
+            reply = f"{compliance.START_REPLY_DEMO} {menu_text.build_menu_text(ENABLED_PROFILES)}"
+        else:
+            conversation_store.set_profile(db, session, APP_CONFIG.default_profile_key)
+            reply = get_greeting()
+        return _finalize(db, phone, message_sid, reply)
+
+    if classification == "help":
+        return _finalize(db, phone, message_sid, compliance.HELP_REPLY)
+
+    # --- Brand-new session: greeting / menu, no LLM call yet ---------------
+    if is_new:
+        if APP_CONFIG.is_demo:
+            reply = menu_text.build_menu_text(ENABLED_PROFILES)
+        else:
+            reply = get_greeting()
+        conversation_store.add_assistant_message(db, session, reply)
+        conversation_store.touch(db, session)
+        return _finalize(db, phone, message_sid, reply)
+
+    # --- Demo: still selecting an industry -----------------------------------
+    if APP_CONFIG.is_demo and session.state == "awaiting_profile_selection":
+        if body.strip().upper() in MID_FLOW_RESET_KEYWORDS:
+            reply = menu_text.build_menu_text(ENABLED_PROFILES)
+            conversation_store.add_assistant_message(db, session, reply)
+            conversation_store.touch(db, session)
+            return _finalize(db, phone, message_sid, reply)
+
+        profile_key = match_menu_selection(body)
+        if profile_key and profile_key in APP_CONFIG.enabled_profile_keys:
+            conversation_store.set_profile(db, session, profile_key)
+            profile = PROFILES[profile_key]
+            first_field = intake_engine.next_missing_field(profile, {})
+            reply = menu_text.build_profile_intro(profile, first_field)
+        else:
+            reply = menu_text.build_invalid_selection_text(ENABLED_PROFILES)
+
+        conversation_store.add_assistant_message(db, session, reply)
+        conversation_store.touch(db, session)
+        return _finalize(db, phone, message_sid, reply)
+
+    # --- Mid-flow MENU/DEMO reset (demo mode only) --------------------------
+    if APP_CONFIG.is_demo and body.strip().upper() in MID_FLOW_RESET_KEYWORDS:
+        conversation_store.reset_to_menu(db, session)
+        reply = menu_text.build_menu_text(ENABLED_PROFILES)
+        conversation_store.add_assistant_message(db, session, reply)
+        conversation_store.touch(db, session)
+        return _finalize(db, phone, message_sid, reply)
+
+    # --- Normal in-progress intake turn --------------------------------------
+    profile = PROFILES[session.profile_key]
+
+    if conversation_store.is_at_max_turns(session):
         logger.warning(f"[app] Max turns reached for {phone}")
-        conversation.mark_terminated(phone)
-        _log_lead(phone, {
-            "category": "unknown",
+        reply = _max_turns_reply()
+        conversation_store.add_assistant_message(db, session, reply)
+        conversation_store.mark_terminated(db, session)
+        ai_result = {
+            "category": None,
             "topic_status": "on_topic",
             "termination_reason": "max_turns",
             "is_complete": False,
             "business_summary": "Conversation reached the maximum turn limit.",
-        })
-        return _safe_reply(MAX_TURNS_REPLY)
+        }
+        conversation_store.record_lead(db, session, ai_result, status="escalated")
+        _export_to_sheets(profile, session, ai_result)
+        return _finalize(db, phone, message_sid, reply)
 
-    # 6. Add user message → AI response
-    conversation.add_user_message(phone, body)
-    history   = conversation.get_history(phone)
-    ai_result = openai_helper.get_ai_response(history)
+    conversation_store.add_user_message(db, session, body)
+    next_field = intake_engine.next_missing_field(profile, session.fields)
 
-    # 7. Merge extracted fields (never lose earlier data)
-    conversation.merge_fields(phone, ai_result.get("extracted_fields", {}))
+    ai_result = openai_helper.get_ai_response(
+        session.history,
+        profile=profile,
+        is_demo=APP_CONFIG.is_demo,
+        is_business_hours=is_business_hours(),
+        business_name=_business_name(),
+        next_field=next_field,
+    )
 
-    # 8. Off-topic tracking / reset on recovery
+    validated_fields = intake_engine.validate_extracted_fields(profile, ai_result.get("extracted_fields", {}))
+    conversation_store.merge_fields(db, session, validated_fields, allowed_keys=set(profile.field_keys()))
+
     topic_status = ai_result.get("topic_status", "on_topic")
     if topic_status == "off_topic":
-        strikes = conversation.increment_off_topic(phone)
+        strikes = conversation_store.increment_off_topic(db, session)
         logger.info(f"[app] Off-topic strike {strikes} for {phone}")
     elif topic_status == "on_topic":
-        conversation.reset_off_topic_strikes(phone)
+        conversation_store.reset_off_topic_strikes(db, session)
 
-    # 9. Terminate if AI says so
     reply_text = ai_result["reply"]
-    if ai_result.get("should_terminate"):
-        reason = ai_result.get("termination_reason", "completed")
-        logger.info(f"[app] Terminating {phone} — reason: {reason}")
-        conversation.add_assistant_message(phone, reply_text)
-        conversation.mark_terminated(phone)
-        _log_lead(phone, ai_result)
+    should_terminate = bool(ai_result.get("should_terminate"))
+    reason = ai_result.get("termination_reason")
+
+    # Application code, not the model, has final say over "complete":
+    # never let a completion claim through unless every required field is
+    # actually present in session state.
+    if should_terminate and reason == "completed" and not intake_engine.is_intake_complete(profile, session.fields):
+        should_terminate = False
+        remaining = intake_engine.next_missing_field(profile, session.fields)
+        if remaining is not None:
+            reply_text = remaining.question
+
+    if should_terminate and reason == "completed":
+        reply_text = menu_text.ensure_demo_disclaimer(reply_text, APP_CONFIG.is_demo)
+
+    if should_terminate:
+        logger.info(f"[app] Terminating {phone} -- reason: {reason}")
+        conversation_store.add_assistant_message(db, session, reply_text)
+        conversation_store.mark_terminated(db, session)
+        status = "completed" if reason == "completed" else "escalated"
+        conversation_store.record_lead(db, session, ai_result, status=status)
+        _export_to_sheets(profile, session, ai_result)
     else:
-        conversation.add_assistant_message(phone, reply_text)
+        conversation_store.add_assistant_message(db, session, reply_text)
 
-    # 10. Reply — truncation applied inside _safe_reply()
-    return _safe_reply(reply_text)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# /reset  — testing helper
-# ─────────────────────────────────────────────────────────────────────────────
-
-@app.route("/reset", methods=["POST"])
-def reset():
-    """
-    Clears one or all in-memory sessions.
-
-    Body (JSON or form):
-      phone : number to reset (optional — omit to clear everything)
-
-    Returns JSON confirmation.
-    """
-    data  = request.get_json(silent=True) or request.form
-    phone = (data.get("phone", "") or "").strip()
-
-    if phone:
-        conversation.reset_session(phone)
-        return jsonify({"status": "ok", "cleared": phone}), 200
-
-    count = conversation.reset_all_sessions()
-    return jsonify({"status": "ok", "cleared": f"{count} session(s)"}), 200
+    conversation_store.touch(db, session)
+    return _finalize(db, phone, message_sid, reply_text)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# /health
-# ─────────────────────────────────────────────────────────────────────────────
+def _export_to_sheets(profile, session, ai_result: dict) -> None:
+    try:
+        sheets_helper.log_lead(
+            session.phone, profile, dict(session.fields or {}), ai_result,
+            {"turn_count": session.turn_count, "off_topic_strikes": session.off_topic_strikes},
+        )
+    except Exception:
+        logger.exception(f"[app] Sheets export raised unexpectedly for {session.phone} -- lead is safe in Postgres.")
 
-@app.route("/health", methods=["GET"])
-def health():
-    return jsonify({"status": "ok", "service": "sms-intake-assistant"}), 200
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Internal helpers
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _safe_reply(message: str):
-    """
-    Truncates message to MAX_REPLY_LENGTH, then wraps in TwiML.
-    Every outbound SMS reply — AI, greeting, max-turns, fallback — goes
-    through here so the length cap is enforced uniformly in one place.
-    """
-    xml = twilio_helper.build_twiml_response(message[:MAX_REPLY_LENGTH])
+def _finalize(db, phone: str, message_sid: str, reply_text: str):
+    xml = twilio_helper.build_twiml_response(reply_text[:MAX_REPLY_LENGTH])
+    conversation_store.record_processed_message(db, message_sid, phone, xml)
     return xml, 200, {"Content-Type": "text/xml"}
 
 
-def _log_lead(phone: str, ai_result: dict) -> None:
-    """Convenience wrapper — pulls session and calls sheets_helper."""
-    session = conversation.get_session(phone)
-    sheets_helper.log_lead(phone, session, ai_result)
+# -----------------------------------------------------------------------------
+# /reset -- testing helper
+# -----------------------------------------------------------------------------
+
+@app.route("/reset", methods=["POST"])
+def reset():
+    data = request.get_json(silent=True) or request.form
+    phone = (data.get("phone", "") or "").strip()
+
+    db = session_scope()
+    try:
+        if phone:
+            cleared = conversation_store.reset_session(db, phone)
+            return jsonify({"status": "ok", "cleared": phone if cleared else None}), 200
+
+        count = conversation_store.reset_all_sessions(db)
+        return jsonify({"status": "ok", "cleared": f"{count} session(s)"}), 200
+    finally:
+        db.close()
 
 
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
+# /health
+# -----------------------------------------------------------------------------
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok", "service": "sms-intake-assistant", "mode": APP_CONFIG.mode}), 200
+
+
+# -----------------------------------------------------------------------------
 # Entry point
-# ─────────────────────────────────────────────────────────────────────────────
+# -----------------------------------------------------------------------------
 
 if __name__ == "__main__":
-    port  = int(os.getenv("PORT", 5000))
+    port = int(os.getenv("PORT", 5000))
     debug = os.getenv("FLASK_ENV", "development").lower() == "development"
-    logger.info(f"[app] Starting on port {port} (debug={debug})")
+    logger.info(f"[app] Starting on port {port} (debug={debug}, mode={APP_CONFIG.mode})")
     app.run(host="0.0.0.0", port=port, debug=debug)
