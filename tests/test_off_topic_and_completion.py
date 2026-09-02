@@ -148,7 +148,7 @@ def test_application_forces_completion_when_final_field_is_collected(demo_app):
     profile = PROFILES["auto_repair"]
     complete_fields = {f.key: "answer" for f in profile.fields}
     complete_fields["customer_name"] = "Nicholas"
-    complete_fields["preferred_callback_time"] = "5pm"
+    complete_fields[profile.preference_field_key] = "Tuesday at 5pm"
 
     with patch(
         "modules.openai_helper.get_ai_response",
@@ -165,7 +165,9 @@ def test_application_forces_completion_when_final_field_is_collected(demo_app):
 
     assert code == 200
     assert "Thanks, Nicholas" in body
-    assert "5pm" in body
+    assert "Tuesday at 5pm" in body
+    assert "not a confirmed appointment" in body
+    assert "confirm pricing and availability" in body
     assert "demo" in body.lower()
     assert _get_session(phone).terminated is True
 
@@ -190,13 +192,17 @@ def test_pricing_followup_after_completion_does_not_restart_menu(demo_app):
     assert "Choose: 1 Auto Repair" not in body
 
 
-def test_broad_callback_availability_has_natural_closing():
+def test_preferred_time_is_never_presented_as_confirmed():
     from modules.menu_text import build_completion_text
 
+    profile = PROFILES["roofing"]
     reply = build_completion_text(
-        {"customer_name": "Nicholas", "preferred_callback_time": "all day tomorrow"},
+        profile,
+        {"customer_name": "Nicholas", profile.preference_field_key: "all day tomorrow"},
         is_demo=True,
     )
 
-    assert "follow up tomorrow" in reply
-    assert "around all day" not in reply
+    assert "all day tomorrow" in reply
+    assert "not a confirmed appointment" in reply
+    assert "confirm pricing and availability" in reply
+    assert "nothing was booked" in reply

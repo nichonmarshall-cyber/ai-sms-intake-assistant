@@ -57,26 +57,25 @@ def ensure_demo_disclaimer(reply: str, is_demo: bool) -> str:
     return f"{reply} {DEMO_DISCLAIMER}"
 
 
-def build_completion_text(fields: dict, is_demo: bool) -> str:
-    """Build a consistent, human closing once application state is complete."""
+def build_completion_text(profile: Profile, fields: dict, is_demo: bool) -> str:
+    """Build a human closing that never confirms pricing or an appointment."""
     name = str((fields or {}).get("customer_name") or "").strip()
-    callback_time = str((fields or {}).get("preferred_callback_time") or "").strip()
+    preferred_time = str((fields or {}).get(profile.preference_field_key) or "").strip()
 
     thanks = f"Thanks, {name}" if name else "Thanks"
-    if callback_time:
-        normalized_time = callback_time.lower()
-        if "all day tomorrow" in normalized_time or "anytime tomorrow" in normalized_time:
-            follow_up = "The team will follow up tomorrow."
-        elif "all day today" in normalized_time or "anytime today" in normalized_time:
-            follow_up = "The team will follow up today."
-        else:
-            follow_up = f"The team will call around {callback_time}."
-        reply = f"{thanks} - that's everything we need. {follow_up}"
+    if preferred_time:
+        reply = (
+            f"{thanks}. {preferred_time} is noted as your preference, not a confirmed "
+            "appointment. The team will call to confirm pricing and availability."
+        )
     else:
-        reply = f"{thanks} - that's everything we need. The team will follow up soon."
+        reply = (
+            f"{thanks} - that's everything we need. The team will call to confirm "
+            "pricing and availability."
+        )
 
     if is_demo:
-        return f"{reply} Demo only; nothing was booked or sent to a real business."
+        return f"{reply} Demo only; nothing was booked."
     return reply
 
 

@@ -260,7 +260,19 @@ def record_lead(
         turn_count=session.turn_count or 0,
         off_topic_strikes=session.off_topic_strikes or 0,
         is_complete=bool(ai_result.get("is_complete", False)),
-        requested_callback_time=(session.fields or {}).get("preferred_callback_time"),
+        requested_callback_time=next(
+            (
+                (session.fields or {}).get(key)
+                for key in (
+                    "preferred_service_time",
+                    "preferred_visit_time",
+                    "preferred_consultation_time",
+                    "preferred_callback_time",
+                )
+                if (session.fields or {}).get(key)
+            ),
+            None,
+        ),
     )
     db.add(lead)
     db.commit()

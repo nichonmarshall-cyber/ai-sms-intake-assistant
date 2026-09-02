@@ -46,6 +46,7 @@ class Profile:
     industry_instructions: str
     categories: tuple[str, ...]
     fields: tuple[FieldSpec, ...]
+    preference_field_key: str
 
     def field_keys(self) -> list[str]:
         return [f.key for f in self.fields]
@@ -89,8 +90,9 @@ AUTO_REPAIR = Profile(
         FieldSpec("problem_started", "When It Started", "When did this problem start?"),
         FieldSpec("is_drivable", "Drivable?", "Is the vehicle currently drivable?"),
         FieldSpec("customer_location", "Location", "What's your location or nearest cross streets?"),
-        FieldSpec("preferred_callback_time", "Preferred Callback Time", "What's the best time to call you back?"),
+        FieldSpec("preferred_service_time", "Preferred Inspection / Service Time", "Is there a day or time you'd prefer to bring the vehicle in or have it looked at?"),
     ),
+    preference_field_key="preferred_service_time",
 )
 
 ROOFING = Profile(
@@ -117,8 +119,9 @@ ROOFING = Profile(
         FieldSpec("issue_started", "When It Began", "When did this issue start?"),
         FieldSpec("is_active_leak", "Active Leak?", "Is water actively leaking right now?"),
         FieldSpec("roof_type", "Roof Type", "Do you know the roof type (shingle, metal, tile, flat, etc.)?", required=False),
-        FieldSpec("preferred_callback_time", "Preferred Callback Time", "What's the best time to call you back?"),
+        FieldSpec("preferred_visit_time", "Preferred Site Visit Time", "Is there a day or time you'd prefer someone to come take a look?"),
     ),
+    preference_field_key="preferred_visit_time",
 )
 
 PAINTING = Profile(
@@ -145,8 +148,9 @@ PAINTING = Profile(
         FieldSpec("surface_condition", "Surface Condition", "What's the current condition of the surface (peeling, cracked, fresh drywall, etc.)?"),
         FieldSpec("desired_colors", "Desired Colors", "Do you have colors in mind?", required=False),
         FieldSpec("desired_timeline", "Timeline", "What's your desired timeline?"),
-        FieldSpec("preferred_callback_time", "Preferred Callback Time", "What's the best time to call you back?"),
+        FieldSpec("preferred_visit_time", "Preferred Estimate / Visit Time", "Is there a day or time you'd prefer someone to come take a look?"),
     ),
+    preference_field_key="preferred_visit_time",
 )
 
 LAWN_CARE = Profile(
@@ -171,8 +175,9 @@ LAWN_CARE = Profile(
         FieldSpec("yard_size", "Yard / Lot Size", "About how big is the yard or lot?", required=False),
         FieldSpec("recurrence", "One-time / Recurring", "Would this be a one-time service or recurring?"),
         FieldSpec("access_info", "Gate / Pet / Access Info", "Anything we should know about gates, pets, or access?", required=False),
-        FieldSpec("preferred_callback_time", "Preferred Day / Callback Time", "What day or time works best for you?"),
+        FieldSpec("preferred_service_time", "Preferred Service Time", "Is there a day or time you'd prefer for the service?"),
     ),
+    preference_field_key="preferred_service_time",
 )
 
 CATERING = Profile(
@@ -198,8 +203,9 @@ CATERING = Profile(
         FieldSpec("event_location", "Event Location", "Where is the event?"),
         FieldSpec("food_requested", "Requested Food / Cuisine", "What kind of food or cuisine are you looking for?"),
         FieldSpec("dietary_restrictions", "Dietary Restrictions", "Any dietary restrictions we should know about?", required=False),
-        FieldSpec("preferred_callback_time", "Preferred Callback Time", "What's the best time to call you back?"),
+        FieldSpec("preferred_consultation_time", "Preferred Consultation Time", "Is there a day or time you'd prefer for a quick consultation?"),
     ),
+    preference_field_key="preferred_consultation_time",
 )
 
 PROFILES: dict[str, Profile] = {

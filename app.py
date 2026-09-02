@@ -56,7 +56,7 @@ def _check_env_vars() -> None:
 _check_env_vars()
 
 # --- Module imports (after load_dotenv so env vars are available) --------
-from modules import conversation_store, compliance, intake_engine, menu_text, openai_helper, sheets_helper, twilio_helper
+from modules import conversation_store, compliance, conversation_policy, intake_engine, menu_text, openai_helper, sheets_helper, twilio_helper
 from modules.business_hours import get_greeting, is_business_hours
 from modules.profiles import PROFILES, match_menu_selection
 from modules.db import init_db, session_scope, get_database_url, is_sqlite
@@ -264,13 +264,22 @@ def _handle_sms(db, phone: str, body: str, message_sid: str):
     conversation_store.merge_fields(db, session, validated_fields, allowed_keys=set(profile.field_keys()))
 
     topic_status = ai_result.get("topic_status", "on_topic")
+    if conversation_policy.is_pricing_question(body):
+        # Pricing is a valid lead question, never an off-topic strike.
+        topic_status = "on_topic"
+        ai_result["topic_status"] = "on_topic"
     if topic_status == "off_topic":
         strikes = conversation_store.increment_off_topic(db, session)
         logger.info(f"[app] Off-topic strike {strikes} for {phone}")
     elif topic_status == "on_topic":
         conversation_store.reset_off_topic_strikes(db, session)
 
-    reply_text = ai_result["reply"]
+    remaining_field = intake_engine.next_missing_field(profile, session.fields)
+    reply_text = conversation_policy.enforce_reply_boundaries(
+        customer_message=body,
+        model_reply=ai_result["reply"],
+        next_field=remaining_field,
+    )
     should_terminate = bool(ai_result.get("should_terminate"))
     reason = ai_result.get("termination_reason")
 
@@ -285,7 +294,7 @@ def _handle_sms(db, phone: str, body: str, message_sid: str):
         ai_result["is_complete"] = True
         ai_result["should_terminate"] = True
         ai_result["termination_reason"] = "completed"
-        reply_text = menu_text.build_completion_text(session.fields, APP_CONFIG.is_demo)
+        reply_text = menu_text.build_completion_text(profile, session.fields, APP_CONFIG.is_demo)
 
     # Application code, not the model, has final say over "complete":
     # never let a completion claim through unless every required field is

@@ -12,7 +12,8 @@ def test_prompt_requires_natural_pricing_handoff():
         next_field=profile.fields[-1],
     )
 
-    assert "cannot give an accurate quote over text" in prompt
-    assert "What's the best time to call?" in prompt
-    assert "avoid stiff or scripted phrases" in prompt
+    assert "Never state, invent, estimate, imply, or confirm a price" in prompt
+    assert "preferences only" in prompt
+    assert "warm, professional, conversational voice" in prompt
+    assert "stiff or scripted phrases" in prompt
     assert "Do not repeat or summarize the customer's entire answer" in prompt
