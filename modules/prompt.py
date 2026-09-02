@@ -174,8 +174,8 @@ outside the JSON. Every field listed below is required.
     "preferred_time": "<string or null>",
     "vehicle_year": "<string or null>",
     "vehicle_make": "<string or null>",
-    "vehicle_model": "<string or null>"
-    "issue_loaction": "<string or null>'
+    "vehicle_model": "<string or null>",
+    "issue_location": "<string or null>"
   }},
   "is_complete": <true | false>,
   "business_summary": "<one-sentence summary of the customer's need, or null>",
