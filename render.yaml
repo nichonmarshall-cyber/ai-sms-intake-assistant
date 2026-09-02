@@ -31,6 +31,16 @@ services:
         value: production
       - key: TWILIO_VALIDATION_BYPASS
         value: "false"
+      - key: MISSED_CALLS_ENABLED
+        value: "false"
+      - key: MISSED_CALL_REQUIRE_ALLOWLIST
+        value: "true"
+      - key: MISSED_CALL_ALLOWLIST
+        sync: false
+      - key: MISSED_CALL_BLOCKLIST
+        sync: false
+      - key: MISSED_CALL_COOLDOWN_MINUTES
+        value: "5"
       - key: MAX_TURNS
         value: "15"
       - key: MAX_HISTORY

@@ -6,6 +6,7 @@ Tables:
   conversation_sessions - one row per active/expired phone-number session
   leads                 - one row per completed or escalated intake
   processed_messages    - Twilio MessageSid ledger for webhook idempotency
+  missed_call_events    - forwarded-call follow-up ledger and CallSid idempotency
 """
 
 from datetime import datetime, timezone
@@ -98,4 +99,28 @@ class ProcessedMessage(Base):
     # identically without re-running the whole pipeline (OpenAI, DB writes).
     response_body: Mapped[str | None] = mapped_column(String(2000), nullable=True)
 
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+
+class MissedCallEvent(Base):
+    """One row for every Twilio Voice webhook received by /voice/missed-call.
+
+    ``call_sid`` is unique, so a Twilio retry—or two Gunicorn workers racing
+    to handle the same webhook—cannot trigger two initial text messages.
+    """
+
+    __tablename__ = "missed_call_events"
+    __table_args__ = (
+        UniqueConstraint("call_sid", name="uq_missed_call_events_call_sid"),
+        Index("ix_missed_call_events_caller_created", "caller_phone", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    call_sid: Mapped[str] = mapped_column(String(64), nullable=False)
+    caller_phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    twilio_number: Mapped[str] = mapped_column(String(32), nullable=False)
+    forwarded_from: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    source: Mapped[str] = mapped_column(String(32), nullable=False, default="missed_call")
+    decision: Mapped[str] = mapped_column(String(64), nullable=False)
+    message_sid: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)

@@ -56,7 +56,7 @@ def _check_env_vars() -> None:
 _check_env_vars()
 
 # --- Module imports (after load_dotenv so env vars are available) --------
-from modules import conversation_store, compliance, conversation_policy, intake_engine, menu_text, openai_helper, sheets_helper, twilio_helper
+from modules import conversation_store, compliance, conversation_policy, intake_engine, menu_text, missed_call, openai_helper, sheets_helper, twilio_helper
 from modules.business_hours import get_greeting, is_business_hours
 from modules.profiles import PROFILES, match_menu_selection
 from modules.db import init_db, session_scope, get_database_url, is_sqlite
@@ -99,6 +99,16 @@ def _business_name() -> str:
 
 def _max_turns_reply() -> str:
     return menu_text.MAX_TURNS_REPLY_DEMO if APP_CONFIG.is_demo else menu_text.MAX_TURNS_REPLY_PRODUCTION
+
+
+def _voice_twiml(message_sent: bool) -> str:
+    """Returns a short, valid Voice response without exposing internal rules."""
+    if message_sent:
+        return (
+            '<?xml version="1.0" encoding="UTF-8"?>'
+            "<Response><Say>Thanks for calling. We'll text you shortly.</Say><Hangup/></Response>"
+        )
+    return '<?xml version="1.0" encoding="UTF-8"?><Response><Hangup/></Response>'
 
 
 # -----------------------------------------------------------------------------
@@ -336,6 +346,44 @@ def _finalize(db, phone: str, message_sid: str, reply_text: str):
     xml = twilio_helper.build_twiml_response(reply_text[:MAX_REPLY_LENGTH])
     conversation_store.record_processed_message(db, message_sid, phone, xml)
     return xml, 200, {"Content-Type": "text/xml"}
+
+
+# -----------------------------------------------------------------------------
+# /voice/missed-call -- Twilio Voice webhook for conditionally forwarded calls
+# -----------------------------------------------------------------------------
+
+@app.route("/voice/missed-call", methods=["POST"])
+@limiter.limit("10 per minute")
+def missed_call_intake():
+    twilio_helper.validate_twilio_request()
+
+    caller_phone = request.form.get("From", "").strip()
+    twilio_number = request.form.get("To", "").strip()
+    forwarded_from = request.form.get("ForwardedFrom", "").strip()
+    call_sid = request.form.get("CallSid", "").strip()
+
+    try:
+        db = session_scope()
+    except Exception:
+        logger.exception("[missed_call] Database connection failure.")
+        return _voice_twiml(False), 200, {"Content-Type": "text/xml"}
+
+    try:
+        outcome = missed_call.process_missed_call(
+            db,
+            caller_phone=caller_phone,
+            twilio_number=twilio_number,
+            forwarded_from=forwarded_from,
+            call_sid=call_sid,
+            business_name=_business_name(),
+            is_demo=APP_CONFIG.is_demo,
+        )
+        return _voice_twiml(outcome.message_sent), 200, {"Content-Type": "text/xml"}
+    except Exception:
+        logger.exception("[missed_call] Unhandled error processing CallSid=%s.", call_sid or "missing")
+        return _voice_twiml(False), 200, {"Content-Type": "text/xml"}
+    finally:
+        db.close()
 
 
 # -----------------------------------------------------------------------------

@@ -41,3 +41,13 @@ def test_bypass_flag_skips_validation(make_app):
     data = {"From": "+15555550004", "Body": "hi", "MessageSid": "SM4"}
     resp = client.post("/sms", data=data)
     assert resp.status_code == 200
+
+
+def test_voice_webhook_requires_a_valid_signature(make_app):
+    app_module = make_app(APP_MODE="demo", TWILIO_VALIDATION_BYPASS="false", TWILIO_AUTH_TOKEN="real-secret-token")
+    client = app_module.app.test_client()
+
+    data = {"From": "+15555550005", "To": "+18173936339", "CallSid": "CA-signature-1"}
+    resp = client.post("/voice/missed-call", data=data, headers={"X-Twilio-Signature": "totally-invalid"})
+
+    assert resp.status_code == 403

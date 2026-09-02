@@ -39,6 +39,8 @@ values in the Render dashboard under the web service's **Environment** tab:
 | `TWILIO_AUTH_TOKEN` | your Twilio auth token |
 | `TWILIO_MESSAGING_SERVICE_SID` | your Twilio Messaging Service SID (if using one) |
 | `PUBLIC_BASE_URL` | `https://ntx-sms-intake-assistant.onrender.com` (or your actual Render URL once assigned) |
+| `MISSED_CALL_ALLOWLIST` | Your test numbers, comma-separated E.164 values; leave the feature disabled until verification |
+| `MISSED_CALL_BLOCKLIST` | Optional numbers that must never receive an automated missed-call text |
 
 Optional, only if enabling Sheets export:
 
@@ -102,7 +104,38 @@ Where to set it:
 
 Save. Send a real text to the 817 number and confirm the menu arrives.
 
-## 6. Post-cutover acceptance check
+## 6. Add missed-call forwarding only after SMS is verified
+
+The deployed app exposes a separate Voice webhook:
+
+```
+https://<your-render-service>.onrender.com/voice/missed-call
+```
+
+In the same Twilio number configuration page, under **Voice & Fax**, set **A
+call comes in** to that URL with method `POST`. Do not replace the existing
+Messaging `/sms` webhook.
+
+Render starts with these conservative defaults from `render.yaml`:
+
+```text
+MISSED_CALLS_ENABLED=false
+MISSED_CALL_REQUIRE_ALLOWLIST=true
+MISSED_CALL_COOLDOWN_MINUTES=5
+```
+
+Add your test handset number to `MISSED_CALL_ALLOWLIST`. From a separate phone,
+call the Verizon business line, do not answer, and confirm the call reaches
+Twilio and Render logs as `feature_disabled`. Then change only
+`MISSED_CALLS_ENABLED` to `true` in Render and repeat the call. The test
+handset should receive the initial demo SMS exactly once; a second call during
+the cooldown should not.
+
+For a real client, use that client's dedicated Twilio number, set their
+conditional forwarding destination to it, remove the temporary allowlist only
+after the test succeeds, and change the cooldown to `1440`.
+
+## 7. Post-cutover acceptance check
 
 Walk the full acceptance test from the project brief against the live
 number: menu -> pick an industry -> complete intake -> demo disclaimer ->

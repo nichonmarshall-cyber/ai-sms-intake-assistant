@@ -19,6 +19,8 @@ When a customer texts in, the system:
 4. Handles off-topic and unsafe messages gracefully
 5. Persists every session and lead to PostgreSQL (SQLite locally/tests only)
 6. Optionally exports completed leads to Google Sheets (`SHEETS_ENABLED=true`)
+7. Can follow up on a conditionally forwarded missed call through a separate,
+   feature-flagged Twilio Voice webhook
 
 ---
 
@@ -58,6 +60,7 @@ smsIntake_assistant/
     ├── conversation_store.py      # DB-backed session state (replaces old in-memory store)
     ├── db.py / models.py          # SQLAlchemy engine + ORM models
     ├── twilio_helper.py           # Signature validation + TwiML
+    ├── missed_call.py             # Missed-call rules, idempotency, outbound SMS
     ├── sheets_helper.py           # Optional Sheets export
     ├── business_hours.py          # Business-hours-aware greeting
     └── time_utils.py              # UTC storage -> America/Chicago display
@@ -136,6 +139,43 @@ Paste the HTTPS ngrok URL + `/sms` into your Twilio webhook settings, and
 set `PUBLIC_BASE_URL` to that same ngrok HTTPS URL so signature validation
 matches (only relevant once `TWILIO_VALIDATION_BYPASS=false`).
 
+### Missed-call follow-up setup
+
+The missed-call workflow is disabled by default. It is designed for a
+client's normal business number to use **conditional call forwarding** to an
+SMS-and-Voice-capable Twilio number. Once that forwarded call reaches Twilio,
+Twilio calls `POST /voice/missed-call`; the app records the call and, only
+when its safety rules allow it, sends one initial SMS from the receiving
+Twilio number.
+
+Start with these variables on a demo deployment:
+
+```env
+MISSED_CALLS_ENABLED=false
+MISSED_CALL_REQUIRE_ALLOWLIST=true
+MISSED_CALL_ALLOWLIST=+15555550100
+MISSED_CALL_BLOCKLIST=
+MISSED_CALL_COOLDOWN_MINUTES=5
+```
+
+After deploying the route and confirming a forwarded call appears in Render
+logs, set `MISSED_CALLS_ENABLED=true` and test from an allowlisted number.
+For a real client, remove the temporary allowlist guard only after testing and
+set `MISSED_CALL_COOLDOWN_MINUTES=1440` to limit the first follow-up to one per
+caller per 24 hours. `STOP` opt-outs and numbers in `MISSED_CALL_BLOCKLIST`
+are always suppressed.
+
+Set the Twilio number's **Voice & Fax → A call comes in** webhook to:
+
+```text
+https://<your-render-service>.onrender.com/voice/missed-call
+```
+
+Use `POST` and set `PUBLIC_BASE_URL` to the same Render origin so request
+signature validation succeeds behind Render's proxy. `missed_call_events`
+stores each CallSid, source, rule decision, and outbound MessageSid; it is the
+audit trail for the dashboard you build later.
+
 ---
 
 ## Testing
@@ -157,6 +197,9 @@ curl -X POST http://localhost:5000/sms \
 
 curl -X POST http://localhost:5000/sms \
   -d "From=%2B15555550100&Body=1&MessageSid=SMtest2"
+
+curl -X POST http://localhost:5000/voice/missed-call \
+  -d "From=%2B15555550100&To=%2B18173936339&CallSid=CAtest1"
 ```
 
 Reset a session (dev/testing only):
