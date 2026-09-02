@@ -188,3 +188,15 @@ def test_pricing_followup_after_completion_does_not_restart_menu(demo_app):
     assert "Pricing depends on the job" in body
     assert "live setup" in body
     assert "Choose: 1 Auto Repair" not in body
+
+
+def test_broad_callback_availability_has_natural_closing():
+    from modules.menu_text import build_completion_text
+
+    reply = build_completion_text(
+        {"customer_name": "Nicholas", "preferred_callback_time": "all day tomorrow"},
+        is_demo=True,
+    )
+
+    assert "follow up tomorrow" in reply
+    assert "around all day" not in reply

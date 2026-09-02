@@ -64,10 +64,14 @@ def build_completion_text(fields: dict, is_demo: bool) -> str:
 
     thanks = f"Thanks, {name}" if name else "Thanks"
     if callback_time:
-        reply = (
-            f"{thanks} - that's everything we need. The team will call around "
-            f"{callback_time}."
-        )
+        normalized_time = callback_time.lower()
+        if "all day tomorrow" in normalized_time or "anytime tomorrow" in normalized_time:
+            follow_up = "The team will follow up tomorrow."
+        elif "all day today" in normalized_time or "anytime today" in normalized_time:
+            follow_up = "The team will follow up today."
+        else:
+            follow_up = f"The team will call around {callback_time}."
+        reply = f"{thanks} - that's everything we need. {follow_up}"
     else:
         reply = f"{thanks} - that's everything we need. The team will follow up soon."
 
