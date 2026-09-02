@@ -65,10 +65,12 @@ def build_completion_text(fields: dict, is_demo: bool) -> str:
     thanks = f"Thanks, {name}" if name else "Thanks"
     if callback_time:
         reply = (
-            f"{thanks} — that's everything we need. Someone from the team will "
-            f"reach out around {callback_time}."
+            f"{thanks} - that's everything we need. The team will call around "
+            f"{callback_time}."
         )
     else:
-        reply = f"{thanks} — that's everything we need. The team will follow up with you soon."
+        reply = f"{thanks} - that's everything we need. The team will follow up soon."
 
-    return ensure_demo_disclaimer(reply, is_demo)
+    if is_demo:
+        return f"{reply} Demo only; nothing was booked or sent to a real business."
+    return reply
