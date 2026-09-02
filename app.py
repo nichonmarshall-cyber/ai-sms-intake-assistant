@@ -261,6 +261,34 @@ def _handle_sms(db, phone: str, body: str, message_sid: str):
     conversation_store.add_user_message(db, session, body)
     next_field = intake_engine.next_missing_field(profile, session.fields)
 
+    # A normal repair customer often answers the first vehicle question with
+    # all three details at once ("2005 Chevy Cobalt LS"). Handle that common
+    # structured format before the LLM so the next reply cannot ask for the
+    # year again after it was already supplied.
+    combined_vehicle_fields = intake_engine.extract_combined_vehicle_details(
+        profile,
+        body,
+        expected_field_key=next_field.key if next_field else None,
+    )
+    if combined_vehicle_fields:
+        conversation_store.merge_fields(
+            db,
+            session,
+            combined_vehicle_fields,
+            allowed_keys=set(profile.field_keys()),
+        )
+        remaining_field = intake_engine.next_missing_field(profile, session.fields)
+        vehicle = " ".join(
+            combined_vehicle_fields[key]
+            for key in ("vehicle_year", "vehicle_make", "vehicle_model")
+        )
+        reply_text = f"Got it, a {vehicle}."
+        if remaining_field is not None:
+            reply_text = f"{reply_text} {remaining_field.question}"
+        conversation_store.add_assistant_message(db, session, reply_text)
+        conversation_store.touch(db, session)
+        return _finalize(db, phone, message_sid, reply_text)
+
     ai_result = openai_helper.get_ai_response(
         session.history,
         profile=profile,

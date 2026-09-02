@@ -7,7 +7,16 @@ decides which required field to ask about next, and whether an intake is
 complete. This keeps question order deterministic across every profile.
 """
 
+import re
+
 from modules.profiles import Profile, FieldSpec
+
+
+_COMBINED_VEHICLE_DETAILS = re.compile(
+    r"^\s*(?P<year>(?:19|20)\d{2})\s+"
+    r"(?P<make>[A-Za-z][A-Za-z0-9-]*)\s+"
+    r"(?P<model>[A-Za-z0-9][A-Za-z0-9 ./'-]*?)\s*$"
+)
 
 
 def next_missing_field(profile: Profile, fields: dict) -> FieldSpec | None:
@@ -23,6 +32,31 @@ def next_missing_field(profile: Profile, fields: dict) -> FieldSpec | None:
 
 def is_intake_complete(profile: Profile, fields: dict) -> bool:
     return next_missing_field(profile, fields) is None
+
+
+def extract_combined_vehicle_details(
+    profile: Profile, text: str, *, expected_field_key: str | None
+) -> dict[str, str]:
+    """Deterministically split a complete vehicle answer into intake fields.
+
+    The auto-repair flow asks for year, make, and model in sequence, but a
+    normal person often gives all three at once.  When the current question is
+    the year and the reply is a direct ``YEAR MAKE MODEL`` answer, save every
+    provided detail now instead of depending on a model extraction call to
+    split it correctly.
+    """
+    if profile.key != "auto_repair" or expected_field_key != "vehicle_year":
+        return {}
+
+    match = _COMBINED_VEHICLE_DETAILS.fullmatch((text or "").strip())
+    if match is None:
+        return {}
+
+    return {
+        "vehicle_year": match.group("year"),
+        "vehicle_make": match.group("make"),
+        "vehicle_model": match.group("model").strip(),
+    }
 
 
 def validate_extracted_fields(profile: Profile, extracted: dict) -> dict:
