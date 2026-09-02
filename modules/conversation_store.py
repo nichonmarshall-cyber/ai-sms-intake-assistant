@@ -189,6 +189,26 @@ def merge_fields(
     db.commit()
 
 
+def get_pending_vehicle_confirmation(session: ConversationSession) -> dict:
+    return dict((session.fields or {}).get("__pending_vehicle_confirmation") or {})
+
+
+def set_pending_vehicle_confirmation(db: DBSession, session: ConversationSession, fields: dict) -> None:
+    values = dict(session.fields or {})
+    values["__pending_vehicle_confirmation"] = dict(fields)
+    session.fields = values
+    db.add(session)
+    db.commit()
+
+
+def clear_pending_vehicle_confirmation(db: DBSession, session: ConversationSession) -> None:
+    values = dict(session.fields or {})
+    values.pop("__pending_vehicle_confirmation", None)
+    session.fields = values
+    db.add(session)
+    db.commit()
+
+
 def is_at_max_turns(session: ConversationSession) -> bool:
     return (session.turn_count or 0) >= _MAX_TURNS
 

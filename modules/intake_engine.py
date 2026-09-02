@@ -8,6 +8,7 @@ complete. This keeps question order deterministic across every profile.
 """
 
 import re
+from difflib import get_close_matches
 
 from modules.profiles import Profile, FieldSpec
 
@@ -17,6 +18,21 @@ _COMBINED_VEHICLE_DETAILS = re.compile(
     r"(?P<make>[A-Za-z][A-Za-z0-9-]*)\s+"
     r"(?P<model>[A-Za-z0-9][A-Za-z0-9 ./'-]*?)\s*$"
 )
+_NATURAL_VEHICLE_DETAILS = re.compile(
+    r"^\s*(?:(?:i\s+(?:have|drive|own)|it(?:'s| is))\s+(?:an?\s+)?)?"
+    r"(?P<year>\d{2}|(?:19|20)\d{2})\s+"
+    r"(?P<make>[A-Za-z][A-Za-z0-9-]*)\s+"
+    r"(?P<model>[A-Za-z0-9][A-Za-z0-9 ./'-]*?)\s*$",
+    re.IGNORECASE,
+)
+_VEHICLE_MAKES = (
+    "Acura", "Alfa Romeo", "Audi", "BMW", "Buick", "Cadillac", "Chevy",
+    "Chrysler", "Dodge", "Fiat", "Ford", "Genesis", "GMC", "Honda",
+    "Hyundai", "Infiniti", "Jaguar", "Jeep", "Kia", "Land Rover", "Lexus",
+    "Lincoln", "Mazda", "Mercedes", "Mini", "Mitsubishi", "Nissan", "Porsche",
+    "Ram", "Subaru", "Tesla", "Toyota", "Volkswagen", "Volvo",
+)
+_MAKE_ALIASES = {"chevrolet": "Chevy", "mercedes-benz": "Mercedes", "vw": "Volkswagen"}
 
 
 def next_missing_field(profile: Profile, fields: dict) -> FieldSpec | None:
@@ -52,10 +68,62 @@ def extract_combined_vehicle_details(
     if match is None:
         return {}
 
+    raw_make = match.group("make").lower()
+    canonical_make = _MAKE_ALIASES.get(raw_make) or next(
+        (make for make in _VEHICLE_MAKES if make.lower() == raw_make),
+        None,
+    )
+    if canonical_make is None:
+        return {}
+
     return {
         "vehicle_year": match.group("year"),
-        "vehicle_make": match.group("make"),
+        "vehicle_make": canonical_make,
         "vehicle_model": match.group("model").strip(),
+    }
+
+
+def infer_uncertain_vehicle_details(
+    profile: Profile, text: str, *, expected_field_key: str | None
+) -> dict[str, str] | None:
+    """Returns a *proposed* vehicle only when it needs customer confirmation."""
+    if profile.key != "auto_repair" or expected_field_key != "vehicle_year":
+        return None
+    match = _NATURAL_VEHICLE_DETAILS.fullmatch((text or "").strip())
+    if match is None:
+        return None
+
+    raw_year = match.group("year")
+    if len(raw_year) == 2:
+        # Modern two-digit years are common in text messages. They are never
+        # saved without confirmation, even though 23 strongly suggests 2023.
+        if int(raw_year) > 30:
+            return None
+        year = f"20{raw_year}"
+        uncertain = True
+    else:
+        year = raw_year
+        uncertain = False
+
+    raw_make = match.group("make").lower()
+    canonical_make = _MAKE_ALIASES.get(raw_make)
+    if canonical_make is None:
+        exact = next((make for make in _VEHICLE_MAKES if make.lower() == raw_make), None)
+        if exact is not None:
+            canonical_make = exact
+        else:
+            close = get_close_matches(raw_make, [make.lower() for make in _VEHICLE_MAKES], n=1, cutoff=0.75)
+            if not close:
+                return None
+            canonical_make = next(make for make in _VEHICLE_MAKES if make.lower() == close[0])
+            uncertain = True
+
+    if not uncertain:
+        return None
+    return {
+        "vehicle_year": year,
+        "vehicle_make": canonical_make,
+        "vehicle_model": match.group("model").strip().title(),
     }
 
 

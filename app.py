@@ -261,6 +261,27 @@ def _handle_sms(db, phone: str, body: str, message_sid: str):
     conversation_store.add_user_message(db, session, body)
     next_field = intake_engine.next_missing_field(profile, session.fields)
 
+    pending_vehicle = conversation_store.get_pending_vehicle_confirmation(session)
+    if pending_vehicle:
+        answer = body.strip().lower()
+        if answer in {"yes", "yeah", "yep", "correct", "that's right", "that is right"}:
+            conversation_store.merge_fields(db, session, pending_vehicle, allowed_keys=set(profile.field_keys()))
+            conversation_store.clear_pending_vehicle_confirmation(db, session)
+            remaining_field = intake_engine.next_missing_field(profile, session.fields)
+            vehicle = " ".join(pending_vehicle[key] for key in ("vehicle_year", "vehicle_make", "vehicle_model"))
+            reply_text = f"Thanks for confirming — a {vehicle}."
+            if remaining_field is not None:
+                reply_text = f"{reply_text} {remaining_field.question}"
+        elif answer in {"no", "nope", "nah"}:
+            conversation_store.clear_pending_vehicle_confirmation(db, session)
+            reply_text = "No problem. What are the correct year, make or brand, and model?"
+        else:
+            vehicle = " ".join(pending_vehicle[key] for key in ("vehicle_year", "vehicle_make", "vehicle_model"))
+            reply_text = f"Just to confirm, is that a {vehicle}? Reply YES or send the corrected year, make, and model."
+        conversation_store.add_assistant_message(db, session, reply_text)
+        conversation_store.touch(db, session)
+        return _finalize(db, phone, message_sid, reply_text)
+
     # A normal repair customer often answers the first vehicle question with
     # all three details at once ("2005 Chevy Cobalt LS"). Handle that common
     # structured format before the LLM so the next reply cannot ask for the
@@ -285,6 +306,22 @@ def _handle_sms(db, phone: str, body: str, message_sid: str):
         reply_text = f"Got it, a {vehicle}."
         if remaining_field is not None:
             reply_text = f"{reply_text} {remaining_field.question}"
+        conversation_store.add_assistant_message(db, session, reply_text)
+        conversation_store.touch(db, session)
+        return _finalize(db, phone, message_sid, reply_text)
+
+    uncertain_vehicle_fields = intake_engine.infer_uncertain_vehicle_details(
+        profile,
+        body,
+        expected_field_key=next_field.key if next_field else None,
+    )
+    if uncertain_vehicle_fields:
+        conversation_store.set_pending_vehicle_confirmation(db, session, uncertain_vehicle_fields)
+        vehicle = " ".join(
+            uncertain_vehicle_fields[key]
+            for key in ("vehicle_year", "vehicle_make", "vehicle_model")
+        )
+        reply_text = f"Just to confirm, is that a {vehicle}?"
         conversation_store.add_assistant_message(db, session, reply_text)
         conversation_store.touch(db, session)
         return _finalize(db, phone, message_sid, reply_text)
