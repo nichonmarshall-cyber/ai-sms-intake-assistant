@@ -22,8 +22,10 @@ git push -u origin demo-platform
 4. Click **Apply**.
 
 `render.yaml` already wires `DATABASE_URL` to the database's internal
-connection string automatically (`fromDatabase`), and runs
-`alembic upgrade head` as a `preDeployCommand` before every deploy.
+connection string automatically (`fromDatabase`). Because Render's free web
+tier does not support `preDeployCommand`, the service runs
+`alembic upgrade head` at the beginning of `startCommand`, immediately before
+Gunicorn starts.
 
 ## 3. Set the secret environment variables
 
@@ -78,8 +80,8 @@ enabled while `FLASK_ENV=production`.
    ```
 4. Check the Render service logs for errors (DB connection, OpenAI errors,
    missing env vars).
-5. Confirm the migration ran: the `preDeployCommand` log should show
-   `alembic upgrade head` completing with no errors, and the first `/sms`
+5. Confirm the migration ran: the startup log should show
+   `alembic upgrade head` completing before Gunicorn starts, and the first `/sms`
    request should succeed (a missing table would surface as a 500).
 
 ## 5. Only after the server is verified healthy: point Twilio at it
