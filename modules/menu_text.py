@@ -55,3 +55,20 @@ def ensure_demo_disclaimer(reply: str, is_demo: bool) -> str:
     if "demo" in reply.lower():
         return reply
     return f"{reply} {DEMO_DISCLAIMER}"
+
+
+def build_completion_text(fields: dict, is_demo: bool) -> str:
+    """Build a consistent, human closing once application state is complete."""
+    name = str((fields or {}).get("customer_name") or "").strip()
+    callback_time = str((fields or {}).get("preferred_callback_time") or "").strip()
+
+    thanks = f"Thanks, {name}" if name else "Thanks"
+    if callback_time:
+        reply = (
+            f"{thanks} — that's everything we need. Someone from the team will "
+            f"reach out around {callback_time}."
+        )
+    else:
+        reply = f"{thanks} — that's everything we need. The team will follow up with you soon."
+
+    return ensure_demo_disclaimer(reply, is_demo)

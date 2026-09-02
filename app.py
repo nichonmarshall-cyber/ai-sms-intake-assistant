@@ -261,6 +261,19 @@ def _handle_sms(db, phone: str, body: str, message_sid: str):
     should_terminate = bool(ai_result.get("should_terminate"))
     reason = ai_result.get("termination_reason")
 
+    # The application owns completion in both directions. If the final answer
+    # filled every required field, close immediately even when the model forgot
+    # to mark the turn complete. This also guarantees a consistent handoff and
+    # demo disclaimer instead of ending on a vague acknowledgement.
+    intake_complete = intake_engine.is_intake_complete(profile, session.fields)
+    if intake_complete and topic_status == "on_topic":
+        should_terminate = True
+        reason = "completed"
+        ai_result["is_complete"] = True
+        ai_result["should_terminate"] = True
+        ai_result["termination_reason"] = "completed"
+        reply_text = menu_text.build_completion_text(session.fields, APP_CONFIG.is_demo)
+
     # Application code, not the model, has final say over "complete":
     # never let a completion claim through unless every required field is
     # actually present in session state.

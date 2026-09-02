@@ -139,3 +139,32 @@ def test_premature_completion_claim_is_rejected(demo_app):
 
     session = _get_session(phone)
     assert session.terminated is False
+
+
+def test_application_forces_completion_when_final_field_is_collected(demo_app):
+    """A complete intake closes even when the model forgets completion flags."""
+    phone = "+15553330005"
+    _select_profile(demo_app, phone)
+    profile = PROFILES["auto_repair"]
+    complete_fields = {f.key: "answer" for f in profile.fields}
+    complete_fields["customer_name"] = "Nicholas"
+    complete_fields["preferred_callback_time"] = "5pm"
+
+    with patch(
+        "modules.openai_helper.get_ai_response",
+        return_value=fake_ai_result(
+            profile,
+            extracted_fields=complete_fields,
+            is_complete=False,
+            should_terminate=False,
+            termination_reason=None,
+            reply="We've noted that the best time is 5pm.",
+        ),
+    ):
+        code, body = send_sms(demo_app, phone, "5pm")
+
+    assert code == 200
+    assert "Thanks, Nicholas" in body
+    assert "5pm" in body
+    assert "demo" in body.lower()
+    assert _get_session(phone).terminated is True
