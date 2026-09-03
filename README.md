@@ -193,10 +193,10 @@ Manual smoke test:
 curl http://localhost:5000/health
 
 curl -X POST http://localhost:5000/sms \
-  -d "From=%2B15555550100&Body=Hi&MessageSid=SMtest1"
+  -d "From=%2B15555550100&To=%2B18173936339&Body=Hi&MessageSid=SMtest1"
 
 curl -X POST http://localhost:5000/sms \
-  -d "From=%2B15555550100&Body=1&MessageSid=SMtest2"
+  -d "From=%2B15555550100&To=%2B18173936339&Body=1&MessageSid=SMtest2"
 
 curl -X POST http://localhost:5000/voice/missed-call \
   -d "From=%2B15555550100&To=%2B18173936339&CallSid=CAtest1"
@@ -207,8 +207,14 @@ Reset a session (dev/testing only):
 ```bash
 curl -X POST http://localhost:5000/reset \
   -H "Content-Type: application/json" \
+  -H "X-Reset-Token: $RESET_TOKEN" \
   -d '{"phone": "+15555550100"}'
 ```
+
+`RESET_ENDPOINT_ENABLED=true` and a non-empty `RESET_TOKEN` are both required.
+The endpoint is disabled by default and must not be used as a dashboard delete
+button. Dashboard archive/delete actions require authenticated role checks and
+an audit event.
 
 ---
 

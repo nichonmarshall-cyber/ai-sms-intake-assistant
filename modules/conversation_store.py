@@ -5,7 +5,7 @@ process-only in-memory dict. This is the only module that touches
 ConversationSession rows directly.
 
 Session lifecycle:
-  - Sessions are keyed by normalized phone number.
+  - Sessions are keyed by business ID plus normalized phone number.
   - SESSION_TTL_MINUTES (default 45) of inactivity expires a session.
     The next inbound message after expiration starts a brand new session
     (fresh state, fresh profile selection in demo mode).
@@ -74,6 +74,7 @@ def get_or_create_session(
     *,
     is_demo: bool,
     default_profile_key: str | None,
+    business_id: str | None = None,
 ) -> tuple[ConversationSession, bool]:
     """
     Returns (session, is_new). A session is considered "new" when no row
@@ -85,7 +86,10 @@ def get_or_create_session(
     now = datetime.now(timezone.utc)
 
     existing = db.execute(
-        select(ConversationSession).where(ConversationSession.phone == phone)
+        select(ConversationSession).where(
+            ConversationSession.phone == phone,
+            ConversationSession.business_id == business_id,
+        )
     ).scalar_one_or_none()
 
     expired = existing is not None and _as_aware_utc(existing.expires_at) < now
@@ -101,6 +105,7 @@ def get_or_create_session(
         db.flush()
 
     session = ConversationSession(
+        business_id=business_id,
         phone=phone,
         state=_initial_state(is_demo),
         profile_key=None if is_demo else default_profile_key,
@@ -240,10 +245,13 @@ def mark_opted_out(db: DBSession, session: ConversationSession, opted_out: bool)
     db.commit()
 
 
-def reset_session(db: DBSession, phone: str) -> bool:
+def reset_session(db: DBSession, phone: str, *, business_id: str | None = None) -> bool:
     phone = normalize_phone(phone)
     existing = db.execute(
-        select(ConversationSession).where(ConversationSession.phone == phone)
+        select(ConversationSession).where(
+            ConversationSession.phone == phone,
+            ConversationSession.business_id == business_id,
+        )
     ).scalar_one_or_none()
     if existing is None:
         return False
@@ -252,8 +260,11 @@ def reset_session(db: DBSession, phone: str) -> bool:
     return True
 
 
-def reset_all_sessions(db: DBSession) -> int:
-    rows = db.execute(select(ConversationSession)).scalars().all()
+def reset_all_sessions(db: DBSession, *, business_id: str | None = None) -> int:
+    statement = select(ConversationSession)
+    if business_id is not None:
+        statement = statement.where(ConversationSession.business_id == business_id)
+    rows = db.execute(statement).scalars().all()
     count = len(rows)
     for row in rows:
         db.delete(row)
@@ -270,6 +281,7 @@ def record_lead(
     status: str,
 ) -> Lead:
     lead = Lead(
+        business_id=session.business_id,
         phone=session.phone,
         profile_key=session.profile_key or "unknown",
         fields=dict(session.fields or {}),
@@ -311,12 +323,18 @@ def find_processed_message(db: DBSession, message_sid: str) -> ProcessedMessage 
 
 
 def record_processed_message(
-    db: DBSession, message_sid: str, phone: str, response_body: str
+    db: DBSession,
+    message_sid: str,
+    phone: str,
+    response_body: str,
+    *,
+    business_id: str | None = None,
 ) -> None:
     if not message_sid:
         return
     db.add(
         ProcessedMessage(
+            business_id=business_id,
             message_sid=message_sid,
             phone=normalize_phone(phone),
             response_body=response_body[:2000] if response_body else None,

@@ -37,7 +37,12 @@ DEFAULT_ENV = {
 # Env keys that must be explicitly cleared between tests if not re-set,
 # since monkeypatch.setenv from a previous test in the same session could
 # otherwise leak into a test that expects them unset.
-_OPTIONAL_KEYS = ("DEFAULT_PROFILE", "ENABLED_PROFILES", "PUBLIC_BASE_URL")
+_OPTIONAL_KEYS = (
+    "DEFAULT_PROFILE",
+    "ENABLED_PROFILES",
+    "PUBLIC_BASE_URL",
+    "TENANT_ROUTING_ENABLED",
+)
 
 
 @pytest.fixture
@@ -78,10 +83,16 @@ def demo_app(make_app):
     return make_app(APP_MODE="demo")
 
 
-def send_sms(app_module, phone: str, body: str, sid: str | None = None):
+def send_sms(
+    app_module,
+    phone: str,
+    body: str,
+    sid: str | None = None,
+    to_number: str = "+18173936339",
+):
     """POSTs one inbound SMS through the Flask test client and returns (status_code, text)."""
     client = app_module.app.test_client()
-    data = {"From": phone, "Body": body}
+    data = {"From": phone, "To": to_number, "Body": body}
     if sid:
         data["MessageSid"] = sid
     else:

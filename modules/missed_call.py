@@ -52,10 +52,29 @@ def _phone_set(name: str) -> set[str]:
     }
 
 
-def _cooldown_minutes() -> int:
+def _configured_phone_set(settings: dict | None, key: str, env_name: str) -> set[str]:
+    if settings is None or key not in settings:
+        return _phone_set(env_name)
+    raw = settings.get(key) or []
+    values = raw.split(",") if isinstance(raw, str) else raw
+    return {normalize_phone(value) for value in values if normalize_phone(value)}
+
+
+def _configured_enabled(settings: dict | None, key: str, env_name: str, *, default: bool) -> bool:
+    if settings is None or key not in settings:
+        return _env_enabled(env_name, default=default)
+    value = settings.get(key)
+    if isinstance(value, bool):
+        return value
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _cooldown_minutes(settings: dict | None = None) -> int:
     try:
+        if settings is not None and "cooldown_minutes" in settings:
+            return max(0, int(settings["cooldown_minutes"]))
         return max(0, int(os.getenv("MISSED_CALL_COOLDOWN_MINUTES", "5")))
-    except ValueError:
+    except (TypeError, ValueError):
         logger.warning("[missed_call] Invalid MISSED_CALL_COOLDOWN_MINUTES; using 5.")
         return 5
 
@@ -75,7 +94,7 @@ def mask_phone(number: str) -> str:
 def initial_sms_text(*, business_name: str, is_demo: bool) -> str:
     if is_demo:
         return (
-            "Hi, this is the NTX Automation Co. demo. Sorry we missed your call. "
+            f"Hi, this is the {business_name} demo. Sorry we missed your call. "
             "Reply DEMO or MENU to explore the intake assistant. Reply STOP to opt out."
         )
     return (
@@ -90,6 +109,8 @@ def should_start_missed_call_intake(
     caller_phone: str,
     twilio_number: str,
     call_sid: str,
+    business_id: str | None = None,
+    rules: dict | None = None,
 ) -> MissedCallDecision:
     """Applies the feature flag, contact, opt-out, and cooldown rules."""
     caller_phone = normalize_phone(caller_phone)
@@ -97,22 +118,27 @@ def should_start_missed_call_intake(
 
     if not call_sid:
         return MissedCallDecision(False, "missing_call_sid")
-    if not _env_enabled("MISSED_CALLS_ENABLED"):
+    if not _configured_enabled(rules, "enabled", "MISSED_CALLS_ENABLED", default=False):
         return MissedCallDecision(False, "feature_disabled")
     if not _is_valid_phone(caller_phone):
         return MissedCallDecision(False, "invalid_caller_number")
     if not _is_valid_phone(twilio_number):
         return MissedCallDecision(False, "invalid_twilio_number")
 
-    if caller_phone in _phone_set("MISSED_CALL_BLOCKLIST"):
+    if caller_phone in _configured_phone_set(rules, "blocklist", "MISSED_CALL_BLOCKLIST"):
         return MissedCallDecision(False, "blocked_caller")
 
-    if _env_enabled("MISSED_CALL_REQUIRE_ALLOWLIST", default=True):
-        if caller_phone not in _phone_set("MISSED_CALL_ALLOWLIST"):
+    if _configured_enabled(
+        rules, "require_allowlist", "MISSED_CALL_REQUIRE_ALLOWLIST", default=True
+    ):
+        if caller_phone not in _configured_phone_set(rules, "allowlist", "MISSED_CALL_ALLOWLIST"):
             return MissedCallDecision(False, "caller_not_allowlisted")
 
     session = db.execute(
-        select(ConversationSession).where(ConversationSession.phone == caller_phone)
+        select(ConversationSession).where(
+            ConversationSession.phone == caller_phone,
+            ConversationSession.business_id == business_id,
+        )
     ).scalar_one_or_none()
     if session is not None and session.opted_out:
         return MissedCallDecision(False, "caller_opted_out")
@@ -123,12 +149,13 @@ def should_start_missed_call_intake(
     if duplicate is not None:
         return MissedCallDecision(False, "duplicate_call_sid")
 
-    cooldown_minutes = _cooldown_minutes()
+    cooldown_minutes = _cooldown_minutes(rules)
     if cooldown_minutes:
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=cooldown_minutes)
         recent_message = db.execute(
             select(MissedCallEvent.id).where(
                 MissedCallEvent.caller_phone == caller_phone,
+                MissedCallEvent.business_id == business_id,
                 MissedCallEvent.message_sid.is_not(None),
                 MissedCallEvent.created_at >= cutoff,
             )
@@ -147,6 +174,7 @@ def _record_event(
     twilio_number: str,
     forwarded_from: str,
     decision: MissedCallDecision,
+    business_id: str | None = None,
 ) -> MissedCallEvent | None:
     """Creates the idempotency record before an outbound SMS can be sent.
 
@@ -154,6 +182,7 @@ def _record_event(
     responsible for the one permitted outbound message.
     """
     event = MissedCallEvent(
+        business_id=business_id,
         call_sid=call_sid,
         caller_phone=normalize_phone(caller_phone),
         twilio_number=normalize_phone(twilio_number),
@@ -197,6 +226,8 @@ def process_missed_call(
     call_sid: str,
     business_name: str,
     is_demo: bool,
+    business_id: str | None = None,
+    rules: dict | None = None,
 ) -> MissedCallOutcome:
     """Records a forwarded call and sends its single permitted follow-up SMS."""
     decision = should_start_missed_call_intake(
@@ -204,6 +235,8 @@ def process_missed_call(
         caller_phone=caller_phone,
         twilio_number=twilio_number,
         call_sid=call_sid,
+        business_id=business_id,
+        rules=rules,
     )
 
     if not call_sid:
@@ -217,6 +250,7 @@ def process_missed_call(
         twilio_number=twilio_number,
         forwarded_from=forwarded_from,
         decision=decision,
+        business_id=business_id,
     )
     if event is None:
         return MissedCallOutcome(

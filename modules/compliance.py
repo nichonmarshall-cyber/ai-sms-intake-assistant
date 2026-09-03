@@ -29,6 +29,25 @@ HELP_REPLY = (
 )
 
 
+def stop_reply(business_name: str) -> str:
+    return (
+        f"You have been unsubscribed from {business_name} messages. "
+        "Reply START to opt back in. No further messages will be sent."
+    )
+
+
+def start_reply(business_name: str) -> str:
+    return f"You're opted back in to {business_name} messages."
+
+
+def help_reply(business_name: str, *, show_profile_menu: bool) -> str:
+    menu_help = " Reply MENU to see services," if show_profile_menu else ""
+    return (
+        f"{business_name} text assistant.{menu_help} Reply STOP to unsubscribe. "
+        "Msg & data rates may apply."
+    )
+
+
 def classify(raw_text: str) -> str | None:
     """Returns 'stop', 'start', 'help', or None."""
     text = (raw_text or "").strip().lower()

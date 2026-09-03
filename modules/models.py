@@ -11,7 +11,7 @@ Tables:
 
 from datetime import datetime, timezone
 
-from sqlalchemy import ForeignKey, String, Integer, Boolean, DateTime, JSON, UniqueConstraint, Index
+from sqlalchemy import ForeignKey, String, Text, Integer, Boolean, DateTime, JSON, UniqueConstraint, Index
 from sqlalchemy.orm import Mapped, mapped_column
 
 from modules.db import Base
@@ -82,6 +82,14 @@ class Lead(Base):
 
     requested_callback_time: Mapped[str | None] = mapped_column(String(120), nullable=True)
 
+    # Dashboard workflow is independent of intake completion/escalation status.
+    workflow_status: Mapped[str] = mapped_column(String(32), nullable=False, default="new")
+    client_notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archived_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("platform_users.id", ondelete="SET NULL"), nullable=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
@@ -136,6 +144,10 @@ class MissedCallEvent(Base):
     decision: Mapped[str] = mapped_column(String(64), nullable=False)
     message_sid: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    archived_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("platform_users.id", ondelete="SET NULL"), nullable=True
+    )
     business_id: Mapped[str | None] = mapped_column(
         ForeignKey("businesses.id", ondelete="RESTRICT"), nullable=True, index=True
     )

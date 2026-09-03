@@ -56,7 +56,7 @@ def _check_env_vars() -> None:
 _check_env_vars()
 
 # --- Module imports (after load_dotenv so env vars are available) --------
-from modules import conversation_store, compliance, conversation_policy, intake_engine, menu_text, missed_call, openai_helper, sheets_helper, twilio_helper
+from modules import conversation_store, compliance, conversation_policy, intake_engine, menu_text, missed_call, openai_helper, sheets_helper, tenancy, twilio_helper
 from modules.business_hours import get_greeting, is_business_hours
 from modules.profiles import PROFILES, match_menu_selection
 from modules.db import init_db, session_scope, get_database_url, is_sqlite
@@ -66,6 +66,11 @@ _db_url = get_database_url()
 if is_sqlite(_db_url):
     logger.info(f"[app] Using SQLite ({_db_url}) -- dev/test only. Auto-creating tables.")
     init_db()
+    _bootstrap_db = session_scope()
+    try:
+        tenancy.ensure_legacy_business(_bootstrap_db)
+    finally:
+        _bootstrap_db.close()
 else:
     logger.info("[app] Using external database. Run `alembic upgrade head` to apply migrations.")
 
@@ -89,16 +94,45 @@ limiter = Limiter(
 
 MAX_REPLY_LENGTH = 500
 
-ENABLED_PROFILES = [PROFILES[k] for k in APP_CONFIG.enabled_profile_keys]
 MID_FLOW_RESET_KEYWORDS = {"MENU", "DEMO"}  # START is handled as a compliance keyword
 
 
-def _business_name() -> str:
-    return "NTX Automation Co." if APP_CONFIG.is_demo else os.getenv("BUSINESS_NAME", "our business")
+def _env_enabled(name: str, default: bool = False) -> bool:
+    return os.getenv(name, str(default)).strip().lower() in {"1", "true", "yes", "on"}
 
 
-def _max_turns_reply() -> str:
-    return menu_text.MAX_TURNS_REPLY_DEMO if APP_CONFIG.is_demo else menu_text.MAX_TURNS_REPLY_PRODUCTION
+def _legacy_runtime() -> tenancy.RuntimeTenant:
+    """Preserves the deployed demo until TENANT_ROUTING_ENABLED is switched on."""
+    return tenancy.RuntimeTenant(
+        business_id=tenancy.LEGACY_BUSINESS_ID,
+        business_name=(
+            "NTX Automation Co."
+            if APP_CONFIG.is_demo
+            else os.getenv("BUSINESS_NAME", "our business")
+        ),
+        enabled_profile_keys=tuple(APP_CONFIG.enabled_profile_keys),
+        default_profile_key=APP_CONFIG.default_profile_key,
+        show_profile_menu=APP_CONFIG.is_demo,
+        is_demo=APP_CONFIG.is_demo,
+        settings={},
+    )
+
+
+def _resolve_runtime(db, twilio_to_number: str) -> tenancy.RuntimeTenant | None:
+    if not _env_enabled("TENANT_ROUTING_ENABLED"):
+        return _legacy_runtime()
+    context = tenancy.resolve_inbound_business(db, twilio_to_number)
+    if context is None:
+        return None
+    return tenancy.build_runtime_tenant(context)
+
+
+def _enabled_profiles(runtime: tenancy.RuntimeTenant):
+    return [PROFILES[key] for key in runtime.enabled_profile_keys]
+
+
+def _max_turns_reply(runtime: tenancy.RuntimeTenant) -> str:
+    return menu_text.MAX_TURNS_REPLY_DEMO if runtime.is_demo else menu_text.MAX_TURNS_REPLY_PRODUCTION
 
 
 def _voice_twiml(message_sent: bool) -> str:
@@ -121,6 +155,7 @@ def sms_intake():
     twilio_helper.validate_twilio_request()
 
     phone = request.form.get("From", "").strip()
+    twilio_number = request.form.get("To", "").strip()
     body = request.form.get("Body", "").strip()
     message_sid = request.form.get("MessageSid", "").strip()
 
@@ -137,7 +172,14 @@ def sms_intake():
         return "", 500
 
     try:
-        return _handle_sms(db, phone, body, message_sid)
+        runtime = _resolve_runtime(db, twilio_number)
+        if runtime is None:
+            logger.error("[tenant] No active business is mapped to destination=%s", twilio_number)
+            return "", 204
+        return _handle_sms(db, phone, body, message_sid, runtime)
+    except tenancy.TenantConfigError:
+        logger.exception("[tenant] Invalid business configuration for destination=%s", twilio_number)
+        return "", 204
     except Exception:
         logger.exception(f"[app] Unhandled error processing message from {phone}.")
         xml = twilio_helper.build_twiml_response(
@@ -148,7 +190,22 @@ def sms_intake():
         db.close()
 
 
-def _handle_sms(db, phone: str, body: str, message_sid: str):
+def _handle_sms(
+    db,
+    phone: str,
+    body: str,
+    message_sid: str,
+    runtime: tenancy.RuntimeTenant,
+):
+    def finish(reply_text: str):
+        return _finalize(
+            db,
+            phone,
+            message_sid,
+            reply_text,
+            business_id=runtime.business_id,
+        )
+
     # --- Idempotency: replay identical response for a retried MessageSid ---
     existing = conversation_store.find_processed_message(db, message_sid)
     if existing is not None:
@@ -159,8 +216,9 @@ def _handle_sms(db, phone: str, body: str, message_sid: str):
 
     session, is_new = conversation_store.get_or_create_session(
         db, phone,
-        is_demo=APP_CONFIG.is_demo,
-        default_profile_key=APP_CONFIG.default_profile_key,
+        is_demo=runtime.show_profile_menu,
+        default_profile_key=runtime.default_profile_key,
+        business_id=runtime.business_id,
     )
 
     # --- Compliance keywords: processed before menu logic or the LLM -------
@@ -168,83 +226,124 @@ def _handle_sms(db, phone: str, body: str, message_sid: str):
 
     if classification == "stop":
         conversation_store.mark_opted_out(db, session, True)
-        return _finalize(db, phone, message_sid, compliance.STOP_REPLY)
+        return finish(compliance.stop_reply(runtime.business_name))
 
     if session.opted_out and classification != "start":
-        conversation_store.record_processed_message(db, message_sid, phone, "")
+        conversation_store.record_processed_message(
+            db, message_sid, phone, "", business_id=runtime.business_id
+        )
         return "", 204
 
     if classification == "start":
         conversation_store.mark_opted_out(db, session, False)
-        if APP_CONFIG.is_demo:
+        if runtime.show_profile_menu:
             conversation_store.reset_to_menu(db, session)
-            reply = f"{compliance.START_REPLY_DEMO} {menu_text.build_menu_text(ENABLED_PROFILES)}"
+            reply = (
+                f"{compliance.start_reply(runtime.business_name)} "
+                f"{menu_text.build_menu_text(_enabled_profiles(runtime), business_name=runtime.business_name, is_demo=runtime.is_demo)}"
+            )
         else:
-            conversation_store.set_profile(db, session, APP_CONFIG.default_profile_key)
-            reply = get_greeting()
-        return _finalize(db, phone, message_sid, reply)
+            conversation_store.set_profile(db, session, runtime.default_profile_key)
+            reply = get_greeting(runtime.settings.get("business_hours"))
+        return finish(reply)
 
     if classification == "help":
-        return _finalize(db, phone, message_sid, compliance.HELP_REPLY)
+        return finish(
+            compliance.help_reply(
+                runtime.business_name, show_profile_menu=runtime.show_profile_menu
+            )
+        )
+
+    # An admin may change the enabled flow while an old conversation is still
+    # open. Never continue a session under a profile the business no longer owns.
+    if session.profile_key and session.profile_key not in runtime.enabled_profile_keys:
+        if runtime.show_profile_menu:
+            conversation_store.reset_to_menu(db, session)
+        else:
+            conversation_store.set_profile(db, session, runtime.default_profile_key)
 
     # Keep a recently completed intake available for natural follow-up instead
     # of treating the next text as a brand-new customer. MENU still starts a
     # fresh demo explicitly, and TTL expiry eventually clears the session.
     if session.terminated:
-        if APP_CONFIG.is_demo and body.strip().upper() in MID_FLOW_RESET_KEYWORDS:
+        if runtime.show_profile_menu and body.strip().upper() in MID_FLOW_RESET_KEYWORDS:
             conversation_store.reset_to_menu(db, session)
-            reply = menu_text.build_menu_text(ENABLED_PROFILES)
+            reply = menu_text.build_menu_text(
+                _enabled_profiles(runtime),
+                business_name=runtime.business_name,
+                is_demo=runtime.is_demo,
+            )
         else:
-            reply = menu_text.build_completed_followup_text(body, APP_CONFIG.is_demo)
+            reply = menu_text.build_completed_followup_text(
+                body,
+                runtime.is_demo,
+                show_profile_menu=runtime.show_profile_menu,
+            )
         conversation_store.add_assistant_message(db, session, reply)
         conversation_store.touch(db, session)
-        return _finalize(db, phone, message_sid, reply)
+        return finish(reply)
 
     # --- Brand-new session: greeting / menu, no LLM call yet ---------------
     if is_new:
-        if APP_CONFIG.is_demo:
-            reply = menu_text.build_menu_text(ENABLED_PROFILES)
+        if runtime.show_profile_menu:
+            reply = menu_text.build_menu_text(
+                _enabled_profiles(runtime),
+                business_name=runtime.business_name,
+                is_demo=runtime.is_demo,
+            )
         else:
-            reply = get_greeting()
+            reply = get_greeting(runtime.settings.get("business_hours"))
         conversation_store.add_assistant_message(db, session, reply)
         conversation_store.touch(db, session)
-        return _finalize(db, phone, message_sid, reply)
+        return finish(reply)
 
     # --- Demo: still selecting an industry -----------------------------------
-    if APP_CONFIG.is_demo and session.state == "awaiting_profile_selection":
+    if runtime.show_profile_menu and session.state == "awaiting_profile_selection":
         if body.strip().upper() in MID_FLOW_RESET_KEYWORDS:
-            reply = menu_text.build_menu_text(ENABLED_PROFILES)
+            reply = menu_text.build_menu_text(
+                _enabled_profiles(runtime),
+                business_name=runtime.business_name,
+                is_demo=runtime.is_demo,
+            )
             conversation_store.add_assistant_message(db, session, reply)
             conversation_store.touch(db, session)
-            return _finalize(db, phone, message_sid, reply)
+            return finish(reply)
 
         profile_key = match_menu_selection(body)
-        if profile_key and profile_key in APP_CONFIG.enabled_profile_keys:
+        if profile_key and profile_key in runtime.enabled_profile_keys:
             conversation_store.set_profile(db, session, profile_key)
             profile = PROFILES[profile_key]
             first_field = intake_engine.next_missing_field(profile, {})
             reply = menu_text.build_profile_intro(profile, first_field)
         else:
-            reply = menu_text.build_invalid_selection_text(ENABLED_PROFILES)
+            reply = menu_text.build_invalid_selection_text(
+                _enabled_profiles(runtime),
+                business_name=runtime.business_name,
+                is_demo=runtime.is_demo,
+            )
 
         conversation_store.add_assistant_message(db, session, reply)
         conversation_store.touch(db, session)
-        return _finalize(db, phone, message_sid, reply)
+        return finish(reply)
 
     # --- Mid-flow MENU/DEMO reset (demo mode only) --------------------------
-    if APP_CONFIG.is_demo and body.strip().upper() in MID_FLOW_RESET_KEYWORDS:
+    if runtime.show_profile_menu and body.strip().upper() in MID_FLOW_RESET_KEYWORDS:
         conversation_store.reset_to_menu(db, session)
-        reply = menu_text.build_menu_text(ENABLED_PROFILES)
+        reply = menu_text.build_menu_text(
+            _enabled_profiles(runtime),
+            business_name=runtime.business_name,
+            is_demo=runtime.is_demo,
+        )
         conversation_store.add_assistant_message(db, session, reply)
         conversation_store.touch(db, session)
-        return _finalize(db, phone, message_sid, reply)
+        return finish(reply)
 
     # --- Normal in-progress intake turn --------------------------------------
     profile = PROFILES[session.profile_key]
 
     if conversation_store.is_at_max_turns(session):
         logger.warning(f"[app] Max turns reached for {phone}")
-        reply = _max_turns_reply()
+        reply = _max_turns_reply(runtime)
         conversation_store.add_assistant_message(db, session, reply)
         conversation_store.mark_terminated(db, session)
         ai_result = {
@@ -256,7 +355,7 @@ def _handle_sms(db, phone: str, body: str, message_sid: str):
         }
         conversation_store.record_lead(db, session, ai_result, status="escalated")
         _export_to_sheets(profile, session, ai_result)
-        return _finalize(db, phone, message_sid, reply)
+        return finish(reply)
 
     conversation_store.add_user_message(db, session, body)
     next_field = intake_engine.next_missing_field(profile, session.fields)
@@ -280,7 +379,7 @@ def _handle_sms(db, phone: str, body: str, message_sid: str):
             reply_text = f"Just to confirm, is that a {vehicle}? Reply YES or send the corrected year, make, and model."
         conversation_store.add_assistant_message(db, session, reply_text)
         conversation_store.touch(db, session)
-        return _finalize(db, phone, message_sid, reply_text)
+        return finish(reply_text)
 
     # A normal repair customer often answers the first vehicle question with
     # all three details at once ("2005 Chevy Cobalt LS"). Handle that common
@@ -308,7 +407,7 @@ def _handle_sms(db, phone: str, body: str, message_sid: str):
             reply_text = f"{reply_text} {remaining_field.question}"
         conversation_store.add_assistant_message(db, session, reply_text)
         conversation_store.touch(db, session)
-        return _finalize(db, phone, message_sid, reply_text)
+        return finish(reply_text)
 
     uncertain_vehicle_fields = intake_engine.infer_uncertain_vehicle_details(
         profile,
@@ -324,14 +423,14 @@ def _handle_sms(db, phone: str, body: str, message_sid: str):
         reply_text = f"Just to confirm, is that a {vehicle}?"
         conversation_store.add_assistant_message(db, session, reply_text)
         conversation_store.touch(db, session)
-        return _finalize(db, phone, message_sid, reply_text)
+        return finish(reply_text)
 
     ai_result = openai_helper.get_ai_response(
         session.history,
         profile=profile,
-        is_demo=APP_CONFIG.is_demo,
-        is_business_hours=is_business_hours(),
-        business_name=_business_name(),
+        is_demo=runtime.is_demo,
+        is_business_hours=is_business_hours(runtime.settings.get("business_hours")),
+        business_name=runtime.business_name,
         next_field=next_field,
     )
 
@@ -369,7 +468,7 @@ def _handle_sms(db, phone: str, body: str, message_sid: str):
         ai_result["is_complete"] = True
         ai_result["should_terminate"] = True
         ai_result["termination_reason"] = "completed"
-        reply_text = menu_text.build_completion_text(profile, session.fields, APP_CONFIG.is_demo)
+        reply_text = menu_text.build_completion_text(profile, session.fields, runtime.is_demo)
 
     # Application code, not the model, has final say over "complete":
     # never let a completion claim through unless every required field is
@@ -381,7 +480,7 @@ def _handle_sms(db, phone: str, body: str, message_sid: str):
             reply_text = remaining.question
 
     if should_terminate and reason == "completed":
-        reply_text = menu_text.ensure_demo_disclaimer(reply_text, APP_CONFIG.is_demo)
+        reply_text = menu_text.ensure_demo_disclaimer(reply_text, runtime.is_demo)
 
     if should_terminate:
         logger.info(f"[app] Terminating {phone} -- reason: {reason}")
@@ -394,7 +493,7 @@ def _handle_sms(db, phone: str, body: str, message_sid: str):
         conversation_store.add_assistant_message(db, session, reply_text)
 
     conversation_store.touch(db, session)
-    return _finalize(db, phone, message_sid, reply_text)
+    return finish(reply_text)
 
 
 def _export_to_sheets(profile, session, ai_result: dict) -> None:
@@ -407,9 +506,18 @@ def _export_to_sheets(profile, session, ai_result: dict) -> None:
         logger.exception(f"[app] Sheets export raised unexpectedly for {session.phone} -- lead is safe in Postgres.")
 
 
-def _finalize(db, phone: str, message_sid: str, reply_text: str):
+def _finalize(
+    db,
+    phone: str,
+    message_sid: str,
+    reply_text: str,
+    *,
+    business_id: str | None = None,
+):
     xml = twilio_helper.build_twiml_response(reply_text[:MAX_REPLY_LENGTH])
-    conversation_store.record_processed_message(db, message_sid, phone, xml)
+    conversation_store.record_processed_message(
+        db, message_sid, phone, xml, business_id=business_id
+    )
     return xml, 200, {"Content-Type": "text/xml"}
 
 
@@ -434,14 +542,20 @@ def missed_call_intake():
         return _voice_twiml(False), 200, {"Content-Type": "text/xml"}
 
     try:
+        runtime = _resolve_runtime(db, twilio_number)
+        if runtime is None:
+            logger.error("[tenant] No active business is mapped to destination=%s", twilio_number)
+            return _voice_twiml(False), 200, {"Content-Type": "text/xml"}
         outcome = missed_call.process_missed_call(
             db,
             caller_phone=caller_phone,
             twilio_number=twilio_number,
             forwarded_from=forwarded_from,
             call_sid=call_sid,
-            business_name=_business_name(),
-            is_demo=APP_CONFIG.is_demo,
+            business_name=runtime.business_name,
+            is_demo=runtime.is_demo,
+            business_id=runtime.business_id,
+            rules=runtime.settings.get("missed_calls") or None,
         )
         return _voice_twiml(outcome.message_sent), 200, {"Content-Type": "text/xml"}
     except Exception:
@@ -457,16 +571,24 @@ def missed_call_intake():
 
 @app.route("/reset", methods=["POST"])
 def reset():
+    if not _env_enabled("RESET_ENDPOINT_ENABLED"):
+        return "", 404
+    configured_token = os.getenv("RESET_TOKEN", "").strip()
+    supplied_token = request.headers.get("X-Reset-Token", "").strip()
+    if not configured_token or supplied_token != configured_token:
+        return jsonify({"status": "forbidden"}), 403
+
     data = request.get_json(silent=True) or request.form
     phone = (data.get("phone", "") or "").strip()
+    business_id = (data.get("business_id", "") or "").strip() or None
 
     db = session_scope()
     try:
         if phone:
-            cleared = conversation_store.reset_session(db, phone)
+            cleared = conversation_store.reset_session(db, phone, business_id=business_id)
             return jsonify({"status": "ok", "cleared": phone if cleared else None}), 200
 
-        count = conversation_store.reset_all_sessions(db)
+        count = conversation_store.reset_all_sessions(db, business_id=business_id)
         return jsonify({"status": "ok", "cleared": f"{count} session(s)"}), 200
     finally:
         db.close()
@@ -478,7 +600,12 @@ def reset():
 
 @app.route("/health", methods=["GET"])
 def health():
-    return jsonify({"status": "ok", "service": "sms-intake-assistant", "mode": APP_CONFIG.mode}), 200
+    return jsonify({
+        "status": "ok",
+        "service": "sms-intake-assistant",
+        "mode": APP_CONFIG.mode,
+        "tenant_routing": _env_enabled("TENANT_ROUTING_ENABLED"),
+    }), 200
 
 
 # -----------------------------------------------------------------------------

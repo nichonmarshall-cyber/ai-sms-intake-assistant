@@ -23,21 +23,34 @@ MAX_TURNS_REPLY_DEMO = (
 )
 
 
-def build_menu_text(profiles: list[Profile]) -> str:
+def build_menu_text(
+    profiles: list[Profile],
+    *,
+    business_name: str = "NTX Automation Co.",
+    is_demo: bool = True,
+) -> str:
     ordered = sorted(profiles, key=lambda p: p.menu_number)
     parts = [f"{p.menu_number} {p.display_name}" for p in ordered]
     if len(parts) > 1:
         options = ", ".join(parts[:-1]) + f", or {parts[-1]}"
     else:
         options = parts[0] if parts else ""
-    return (
-        f"NTX Automation Co. demo. Choose: {options}. Reply MENU anytime. "
-        "Demo only—nothing is booked."
+    intro = f"{business_name} demo" if is_demo else business_name
+    reply = f"{intro}. Choose: {options}. Reply MENU anytime."
+    if is_demo:
+        reply = f"{reply} Demo only—nothing is booked."
+    return reply
+
+
+def build_invalid_selection_text(
+    profiles: list[Profile],
+    *,
+    business_name: str = "NTX Automation Co.",
+    is_demo: bool = True,
+) -> str:
+    return "Sorry, we didn't catch that. " + build_menu_text(
+        profiles, business_name=business_name, is_demo=is_demo
     )
-
-
-def build_invalid_selection_text(profiles: list[Profile]) -> str:
-    return "Sorry, we didn't catch that. " + build_menu_text(profiles)
 
 
 def build_profile_intro(profile: Profile, first_field: FieldSpec) -> str:
@@ -79,7 +92,12 @@ def build_completion_text(profile: Profile, fields: dict, is_demo: bool) -> str:
     return reply
 
 
-def build_completed_followup_text(body: str, is_demo: bool) -> str:
+def build_completed_followup_text(
+    body: str,
+    is_demo: bool,
+    *,
+    show_profile_menu: bool = False,
+) -> str:
     """Answer common follow-ups without silently starting a new intake."""
     normalized = (body or "").lower()
     asks_price = any(word in normalized for word in ("price", "cost", "quote", "estimate", "how much"))
@@ -97,4 +115,7 @@ def build_completed_followup_text(body: str, is_demo: bool) -> str:
 
     if is_demo:
         return "That demo intake is complete. Nothing was booked. Reply MENU to try another."
-    return "We already have your information. The team will follow up soon."
+    reply = "We already have your information. The team will follow up soon."
+    if show_profile_menu:
+        reply = f"{reply} Reply MENU to start another request."
+    return reply

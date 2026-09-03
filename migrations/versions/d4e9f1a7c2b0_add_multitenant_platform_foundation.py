@@ -95,18 +95,61 @@ def upgrade() -> None:
     )
     op.create_index("ix_audit_events_business_created", "audit_events", ["business_id", "created_at"])
 
-    now = sa.text("CURRENT_TIMESTAMP")
+    op.add_column(
+        "leads", sa.Column("workflow_status", sa.String(length=32), nullable=False, server_default="new")
+    )
+    op.add_column("leads", sa.Column("client_notes", sa.Text(), nullable=True))
+    op.add_column("leads", sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True))
+    op.add_column("leads", sa.Column("archived_by_user_id", sa.String(length=36), nullable=True))
+    op.create_foreign_key(
+        "fk_leads_archived_by_user_id",
+        "leads",
+        "platform_users",
+        ["archived_by_user_id"],
+        ["id"],
+        ondelete="SET NULL",
+    )
+    op.add_column("missed_call_events", sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True))
+    op.add_column(
+        "missed_call_events", sa.Column("archived_by_user_id", sa.String(length=36), nullable=True)
+    )
+    op.create_foreign_key(
+        "fk_missed_call_events_archived_by_user_id",
+        "missed_call_events",
+        "platform_users",
+        ["archived_by_user_id"],
+        ["id"],
+        ondelete="SET NULL",
+    )
+
+    # Static PostgreSQL SQL is intentional: Alembic cannot render a Python dict
+    # as a JSON literal during `alembic upgrade --sql`. json_build_object also
+    # avoids SQLAlchemy interpreting JSON colon tokens as bind parameters.
     op.execute(
-        sa.text(
-            "INSERT INTO businesses (id, name, slug, status, default_profile_key, settings, created_at, updated_at) "
-            "VALUES (:id, :name, :slug, :status, NULL, :settings, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"
-        ).bindparams(
-            id=LEGACY_BUSINESS_ID,
-            name="NTX Automation Co. Demo",
-            slug="ntx-demo",
-            status="active",
-            settings="{}",
-        )
+        """
+        INSERT INTO businesses
+            (id, name, slug, status, default_profile_key, settings, created_at, updated_at)
+        VALUES
+            (
+                'legacy-demo',
+                'NTX Automation Co. Demo',
+                'ntx-demo',
+                'active',
+                NULL,
+                json_build_object(
+                    'intake', json_build_object(
+                        'selection_mode', 'menu',
+                        'demo_disclaimer', TRUE,
+                        'enabled_profiles', json_build_array(
+                            'auto_repair', 'roofing', 'painting', 'lawn_care', 'catering'
+                        )
+                    ),
+                    'missed_calls', json_build_object('enabled', FALSE)
+                ),
+                CURRENT_TIMESTAMP,
+                CURRENT_TIMESTAMP
+            )
+        """
     )
 
     # Keep columns nullable in this migration so it can safely apply to a live
@@ -136,6 +179,17 @@ def downgrade() -> None:
         op.drop_index(f"ix_{table}_business_id", table_name=table)
         op.drop_constraint(f"fk_{table}_business_id", table, type_="foreignkey")
         op.drop_column(table, "business_id")
+
+    op.drop_constraint(
+        "fk_missed_call_events_archived_by_user_id", "missed_call_events", type_="foreignkey"
+    )
+    op.drop_column("missed_call_events", "archived_by_user_id")
+    op.drop_column("missed_call_events", "archived_at")
+    op.drop_constraint("fk_leads_archived_by_user_id", "leads", type_="foreignkey")
+    op.drop_column("leads", "archived_by_user_id")
+    op.drop_column("leads", "archived_at")
+    op.drop_column("leads", "client_notes")
+    op.drop_column("leads", "workflow_status")
 
     op.drop_index("ix_audit_events_business_created", table_name="audit_events")
     op.drop_table("audit_events")

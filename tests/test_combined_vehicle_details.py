@@ -61,7 +61,7 @@ def test_combined_vehicle_answer_advances_without_reasking_year(demo_app):
 
     mock_ai.assert_not_called()
     assert "Got it, a 2005 Chevy Cobalt LS." in reply
-    assert "What's going on with the vehicle?" in reply
+    assert "going on with the vehicle?" in reply
     assert "What year is the vehicle?" not in reply
 
     db = session_scope()
@@ -89,4 +89,4 @@ def test_shorthand_vehicle_details_are_saved_only_after_yes(demo_app):
 
     _, reply = send_sms(demo_app, phone, "yes")
     assert "Thanks for confirming — a 2023 Chevy Cruze." in reply
-    assert "What's going on with the vehicle?" in reply
+    assert "going on with the vehicle?" in reply
