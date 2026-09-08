@@ -609,6 +609,18 @@ def health():
 
 
 # -----------------------------------------------------------------------------
+# Dashboard blueprints
+# -----------------------------------------------------------------------------
+# Registered AFTER the Twilio and system routes above, which are deliberately
+# left in place untouched. register_blueprints() adds the SPA catch-all last so
+# it cannot shadow /sms, /voice/missed-call, /health, /reset, or /api/*.
+
+from modules.web import register_blueprints
+
+register_blueprints(app)
+
+
+# -----------------------------------------------------------------------------
 # Entry point
 # -----------------------------------------------------------------------------
 

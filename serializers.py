@@ -1,0 +1,94 @@
+"""Explicit response DTOs.
+
+Allow-list, never a blanket dump of an ORM row. Nothing here may emit
+password_hash, token_hash, csrf_hash, ip_hash, or any provider credential.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+
+from modules.auth.decorators import platform_role
+
+
+def _iso(value: datetime | None) -> str | None:
+    return value.isoformat() if value else None
+
+
+def user_dto(user) -> dict:
+    return {
+        "id": user.id,
+        "email": user.email,
+        "display_name": user.display_name,
+        "platform_role": platform_role(user),
+        "is_active": user.is_active,
+        "created_at": _iso(user.created_at),
+    }
+
+
+def business_dto(business, *, module_keys: list[str] | None = None) -> dict:
+    settings = business.settings or {}
+    intake = settings.get("intake") or {}
+    return {
+        "id": business.id,
+        "name": business.name,
+        "slug": business.slug,
+        "status": business.status,
+        "default_profile_key": business.default_profile_key,
+        "is_demo": bool(intake.get("demo_disclaimer", False)),
+        "selection_mode": intake.get("selection_mode", "single"),
+        "enabled_profiles": intake.get("enabled_profiles", []),
+        "modules": module_keys or [],
+        "created_at": _iso(business.created_at),
+        "updated_at": _iso(business.updated_at),
+    }
+
+
+def phone_number_dto(number) -> dict:
+    return {
+        "id": number.id,
+        "business_id": number.business_id,
+        "phone": number.phone,
+        "label": number.label,
+        "enabled": number.enabled,
+        "created_at": _iso(number.created_at),
+    }
+
+
+def membership_dto(membership, *, user=None) -> dict:
+    payload = {
+        "id": membership.id,
+        "business_id": membership.business_id,
+        "user_id": membership.user_id,
+        "role": membership.role,
+        "created_at": _iso(membership.created_at),
+    }
+    if user is not None:
+        payload["user"] = user_dto(user)
+    return payload
+
+
+def audit_event_dto(event) -> dict:
+    return {
+        "id": event.id,
+        "business_id": event.business_id,
+        "actor_user_id": event.actor_user_id,
+        "action": event.action,
+        "target_type": event.target_type,
+        "target_id": event.target_id,
+        "details": event.details or {},
+        "created_at": _iso(event.created_at),
+    }
+
+
+def session_dto(row) -> dict:
+    """Deliberately omits token_hash, csrf_hash, and ip_hash."""
+    return {
+        "id": row.id,
+        "user_id": row.user_id,
+        "created_at": _iso(row.created_at),
+        "last_activity_at": _iso(row.last_activity_at),
+        "expires_at": _iso(row.expires_at),
+        "revoked_at": _iso(row.revoked_at),
+        "user_agent": row.user_agent,
+    }

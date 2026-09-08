@@ -1,0 +1,122 @@
+/*
+ * NTX Automation Co. design tokens.
+ * Palette carried over from the marketing site (ntxautomationco.com) so the
+ * dashboard and the public brand read as one system.
+ */
+:root {
+  --ntx-black: #0c0c0c;
+  --ntx-surface: #121212;
+  --ntx-card: #1a1a1a;
+  --ntx-card-hover: #212121;
+  --ntx-elevated: #242424;
+
+  --ntx-orange: #d94f0a;
+  --ntx-orange-light: #e8621f;
+  --ntx-orange-dim: rgba(217, 79, 10, 0.1);
+  --ntx-orange-border: rgba(217, 79, 10, 0.35);
+
+  --ntx-white: #f4f1eb;
+  --ntx-body: rgba(244, 241, 235, 0.72);
+  --ntx-muted: rgba(244, 241, 235, 0.46);
+  --ntx-border: rgba(255, 255, 255, 0.08);
+  --ntx-border-strong: rgba(255, 255, 255, 0.14);
+
+  --ntx-green: #3fb950;
+  --ntx-amber: #d29922;
+  --ntx-red: #da5b52;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-raised: 0 8px 24px rgba(0, 0, 0, 0.5);
+
+  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+
+  --sidebar-width: 232px;
+  --topbar-height: 60px;
+
+  --motion-fast: 120ms;
+  --motion-base: 200ms;
+  --ease: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Accessibility: honour the OS setting rather than animating regardless. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--ntx-black);
+  color: var(--ntx-white);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  margin: 0;
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+/* Every interactive element needs a visible focus ring, not just :hover. */
+:focus-visible {
+  outline: 2px solid var(--ntx-orange);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+.ntx-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
