@@ -20,6 +20,11 @@ credentials/
 htmlcov/
 *.egg-info/
 
+# Frontend (Node/Vite) -- must live under frontend/, never at the repo root
+node_modules/
+frontend/dist/
+static/dist/
+
 # Editor/OS
 .vscode/
 .idea/

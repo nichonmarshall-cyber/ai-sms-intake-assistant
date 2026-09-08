@@ -202,6 +202,9 @@ class PlatformUser(Base):
     display_name: Mapped[str | None] = mapped_column(String(120), nullable=True)
     password_hash: Mapped[str] = mapped_column(String(255), nullable=False)
     is_platform_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # "none" | "staff" | "admin". Kept in sync with is_platform_admin, which
+    # remains for backward compatibility until a later phase drops it.
+    platform_role: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
@@ -246,3 +249,81 @@ class AuditEvent(Base):
     target_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     details: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+
+class UserSession(Base):
+    """Server-side, revocable dashboard session.
+
+    Only a hash of the opaque session token is stored, so a database leak
+    cannot be replayed as a live session. ``csrf_hash`` binds CSRF protection
+    to this exact session rather than to a free-floating readable cookie.
+    """
+
+    __tablename__ = "user_sessions"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_user_sessions_token_hash"),
+        Index("ix_user_sessions_user_created", "user_id", "created_at"),
+        Index("ix_user_sessions_expires_at", "expires_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("platform_users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    csrf_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    last_activity_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, nullable=False
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    # Keyed HMAC digest. A raw IP address is never written to this table.
+    ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    user_agent: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
+
+class LoginAttempt(Base):
+    """Postgres-backed throttle ledger.
+
+    Deliberately not in-process: Gunicorn runs multiple workers, so an
+    in-memory counter would let an attacker get N attempts per worker.
+    """
+
+    __tablename__ = "login_attempts"
+    __table_args__ = (
+        Index("ix_login_attempts_email_created", "email_lower", "created_at"),
+        Index("ix_login_attempts_ip_created", "ip_hash", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    email_lower: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+
+class BusinessModule(Base):
+    """Per-business module entitlement.
+
+    Absence of a row means the module is not entitled. Navigation reads this,
+    and so does every module API route -- hiding a nav link is not authorization.
+    """
+
+    __tablename__ = "business_modules"
+    __table_args__ = (
+        UniqueConstraint("business_id", "module_key", name="uq_business_modules_business_key"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    business_id: Mapped[str] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    module_key: Mapped[str] = mapped_column(String(48), nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )

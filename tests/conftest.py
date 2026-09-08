@@ -115,3 +115,93 @@ def fake_ai_result(profile, **overrides) -> dict:
     }
     result.update(overrides)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Dashboard auth helpers (Phase 1a)
+# ---------------------------------------------------------------------------
+
+def make_platform_user(
+    email: str = "admin@ntx.test",
+    password: str = "correct-horse-battery-staple",
+    platform_role: str = "admin",
+    is_active: bool = True,
+):
+    """Creates a dashboard user directly in the test database."""
+    from modules.auth import passwords
+    from modules.db import session_scope
+    from modules.models import PlatformUser
+
+    db = session_scope()
+    try:
+        user = PlatformUser(
+            id=str(uuid.uuid4()),
+            email=email.lower(),
+            display_name=email.split("@")[0],
+            password_hash=passwords.hash_password(password),
+            platform_role=platform_role,
+            is_platform_admin=(platform_role == "admin"),
+            is_active=is_active,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        return user
+    finally:
+        db.close()
+
+
+def make_business(name: str = "Miller Auto Care", slug: str = "miller-auto", with_defaults: bool = True):
+    from modules import entitlements
+    from modules.db import session_scope
+    from modules.models import Business
+
+    db = session_scope()
+    try:
+        business = Business(
+            id=str(uuid.uuid4()), name=name, slug=slug, status="active", settings={}
+        )
+        db.add(business)
+        db.flush()
+        if with_defaults:
+            entitlements.apply_defaults(db, business.id)
+        db.commit()
+        db.refresh(business)
+        return business
+    finally:
+        db.close()
+
+
+def make_membership(business_id: str, user_id: str, role: str = "owner"):
+    from modules.db import session_scope
+    from modules.models import BusinessMembership
+
+    db = session_scope()
+    try:
+        membership = BusinessMembership(business_id=business_id, user_id=user_id, role=role)
+        db.add(membership)
+        db.commit()
+        db.refresh(membership)
+        return membership
+    finally:
+        db.close()
+
+
+def _cookies_from(response) -> dict:
+    jar = {}
+    for header in response.headers.getlist("Set-Cookie"):
+        name, _, rest = header.partition("=")
+        jar[name.strip()] = rest.split(";")[0]
+    return jar
+
+
+def login(app_module, email: str, password: str):
+    """Logs in and returns (client, csrf_token, response)."""
+    client = app_module.app.test_client()
+    response = client.post("/api/auth/login", json={"email": email, "password": password})
+    csrf = _cookies_from(response).get("ntx_csrf", "")
+    return client, csrf, response
+
+
+def auth_headers(csrf_token: str) -> dict:
+    return {"X-CSRF-Token": csrf_token}
