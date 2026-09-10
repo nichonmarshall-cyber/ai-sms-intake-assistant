@@ -81,6 +81,30 @@ def audit_event_dto(event) -> dict:
     }
 
 
+def lead_dto(lead) -> dict:
+    """Client-safe lead representation for the lead-management workspace."""
+    fields = lead.fields or {}
+    return {
+        "id": lead.id,
+        "phone": lead.phone,
+        "profile_key": lead.profile_key,
+        "customer_name": fields.get("name") or fields.get("customer_name"),
+        "service_request": fields.get("service_request") or fields.get("service"),
+        "source": fields.get("source"),
+        "intake_data": fields,
+        "intake_status": lead.status,
+        "workflow_status": lead.workflow_status,
+        "category": lead.category,
+        "business_summary": lead.business_summary,
+        "client_notes": lead.client_notes,
+        "requested_callback_time": lead.requested_callback_time,
+        "is_complete": lead.is_complete,
+        "archived_at": _iso(lead.archived_at),
+        "created_at": _iso(lead.created_at),
+        "updated_at": _iso(lead.updated_at),
+    }
+
+
 def session_dto(row) -> dict:
     """Deliberately omits token_hash, csrf_hash, and ip_hash."""
     return {

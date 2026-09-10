@@ -88,6 +88,28 @@ export interface Paged<T> {
   page_size: number;
 }
 
+export type LeadWorkflowStatus = "new" | "qualified" | "needs_review" | "scheduled" | "closed";
+
+export interface Lead {
+  id: number;
+  phone: string;
+  profile_key: string;
+  customer_name: string | null;
+  service_request: string | null;
+  source: string | null;
+  intake_data: Record<string, unknown>;
+  intake_status: string;
+  workflow_status: LeadWorkflowStatus;
+  category: string | null;
+  business_summary: string | null;
+  client_notes: string | null;
+  requested_callback_time: string | null;
+  is_complete: boolean;
+  archived_at: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 /** A metric the platform cannot honestly report yet, and why. */
 export interface UnavailableMetric {
   key: string;

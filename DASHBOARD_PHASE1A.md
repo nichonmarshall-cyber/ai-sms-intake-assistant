@@ -5,6 +5,14 @@ for both dashboards. No Website Health, Local SEO, Analytics, Reviews, or
 Restaurant CRM functionality is implemented in this phase; their entitlement
 keys exist and their screens show honest "not available yet" states.
 
+## Phase 2 progress
+
+The client **Leads** module is now functional. It lists real tenant-scoped lead
+rows with search, workflow-status filtering, pagination, detail review, internal
+notes, status updates, and reversible archive/restore actions. Owners, managers,
+and staff may update leads; viewers and platform staff remain read-only. Every
+mutation writes a tenant-scoped audit event.
+
 ## What is deliberately NOT deployed
 
 `render.yaml` is unchanged. Render still runs `pip install -r requirements.txt`

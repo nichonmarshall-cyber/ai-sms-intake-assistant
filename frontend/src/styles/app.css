@@ -359,6 +359,125 @@
 .toolbar .input {
   max-width: 280px;
 }
+.toolbar__select {
+  width: auto;
+  min-width: 170px;
+}
+.archive-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  color: var(--ntx-body);
+  font-size: 12px;
+  cursor: pointer;
+}
+.archive-filter input {
+  accent-color: var(--ntx-orange);
+}
+
+/* Lead management -------------------------------------------------------- */
+.lead-workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.7fr) minmax(320px, 0.8fr);
+  align-items: start;
+  gap: var(--space-4);
+}
+.lead-page-count {
+  color: var(--ntx-muted);
+  font-size: 12px;
+}
+.lead-row--selected {
+  background: var(--ntx-orange-dim);
+}
+.lead-cell-button {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ntx-white);
+  text-align: left;
+}
+.lead-cell-button span {
+  color: var(--ntx-muted);
+  font-size: 11px;
+}
+.lead-archived-label {
+  display: block;
+  color: var(--ntx-muted);
+  font-size: 10px;
+  margin-top: 5px;
+}
+.lead-cell-button:hover strong,
+.lead-cell-button:focus-visible strong {
+  color: var(--ntx-orange-light);
+}
+.lead-detail__summary {
+  padding-bottom: var(--space-4);
+  border-bottom: 1px solid var(--ntx-border);
+}
+.lead-detail__summary h3 {
+  font-size: 18px;
+  margin-bottom: 3px;
+}
+.lead-detail__summary a {
+  color: var(--ntx-orange-light);
+  font-size: 13px;
+}
+.lead-detail__summary p {
+  color: var(--ntx-body);
+  font-size: 13px;
+  line-height: 1.5;
+  margin: var(--space-3) 0 0;
+}
+.lead-detail__facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  margin: var(--space-4) 0;
+}
+.lead-detail__facts div {
+  min-width: 0;
+}
+.lead-detail__facts dt {
+  color: var(--ntx-muted);
+  font-size: 10px;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+.lead-detail__facts dd {
+  color: var(--ntx-body);
+  font-size: 12px;
+  margin: 3px 0 0;
+  text-transform: capitalize;
+}
+.lead-notes {
+  min-height: 110px;
+  resize: vertical;
+  line-height: 1.5;
+}
+.lead-detail__actions,
+.pagination {
+  display: flex;
+  gap: var(--space-3);
+}
+.pagination {
+  justify-content: flex-end;
+  padding-top: var(--space-4);
+}
+.read-only-note {
+  color: var(--ntx-muted);
+  font-size: 12px;
+}
+
+@media (max-width: 1050px) {
+  .lead-workspace {
+    grid-template-columns: 1fr;
+  }
+}
 
 /* States ------------------------------------------------------------------ */
 .state {
