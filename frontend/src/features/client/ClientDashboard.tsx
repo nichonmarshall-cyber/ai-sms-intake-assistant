@@ -20,11 +20,13 @@ import {
   Stat,
   useFocusOnMount,
 } from "../../components";
+import { Conversations } from "./Conversations";
 
 interface OverviewPayload {
   metrics: {
     total_leads: number;
     new_leads: number;
+    open_conversations: number;
     missed_calls_handled: number;
   };
   unavailable: UnavailableMetric[];
@@ -359,6 +361,7 @@ function Overview({ businessId }: { businessId: string }) {
         <>
           <div className="stat-grid">
             <Stat label="New leads" value={data.metrics.new_leads} icon="◆" />
+            <Stat label="Open conversations" value={data.metrics.open_conversations} icon="◉" />
             <Stat label="Total leads" value={data.metrics.total_leads} icon="◈" />
             <Stat label="Missed calls handled" value={data.metrics.missed_calls_handled} icon="✆" />
           </div>
@@ -476,6 +479,7 @@ export function ClientDashboardRoutes({
     <Routes>
       <Route index element={<Overview businessId={businessId} />} />
       <Route path="leads" element={<Leads businessId={businessId} readOnly={readOnly} />} />
+      <Route path="conversations" element={<Conversations businessId={businessId} />} />
       <Route path="settings" element={<Settings businessId={businessId} readOnly={readOnly} />} />
       {modules
         .filter((module) => !module.implemented)

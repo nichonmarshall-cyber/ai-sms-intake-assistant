@@ -11,8 +11,9 @@ from sqlalchemy import inspect, select
 
 from modules import entitlements
 from modules.db import session_scope
-from modules.models import Business, BusinessModule
+from modules.models import Business, BusinessModule, ConversationSession
 from modules.tenancy import LEGACY_BUSINESS_ID, ensure_legacy_business
+from scripts.seed_local_demo import _ensure_client_business, _seed_activity
 
 
 def test_legacy_demo_has_demo_settings_and_default_modules(demo_app):
@@ -53,6 +54,30 @@ def test_legacy_demo_repairs_empty_sqlite_bootstrap(demo_app):
         assert modules == set(entitlements.DEFAULT_ENABLED_MODULES)
     finally:
         db.close()
+
+
+def test_local_activity_seed_adds_conversations_idempotently(demo_app):
+    db = session_scope()
+    try:
+        business = _ensure_client_business(db)
+        first = _seed_activity(db, business_id=business.id)
+        db.commit()
+        second = _seed_activity(db, business_id=business.id)
+        db.commit()
+
+        sessions = list(
+            db.execute(
+                select(ConversationSession).where(
+                    ConversationSession.business_id == business.id
+                )
+            ).scalars()
+        )
+    finally:
+        db.close()
+
+    assert first == (5, 2, 3)
+    assert second == (0, 0, 0)
+    assert len(sessions) == 3
 
 
 def test_sqlite_alembic_upgrade_reaches_head(tmp_path):

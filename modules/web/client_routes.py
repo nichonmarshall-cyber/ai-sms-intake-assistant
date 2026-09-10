@@ -7,13 +7,19 @@ from sqlalchemy import String, cast, func, or_, select
 
 from modules import entitlements
 from modules.auth.decorators import require_business_access, require_module
-from modules.models import Business, Lead, MissedCallEvent
-from modules.serializers import business_dto, lead_dto
+from modules.models import Business, ConversationSession, Lead, MissedCallEvent
+from modules.serializers import (
+    business_dto,
+    conversation_detail_dto,
+    conversation_summary_dto,
+    lead_dto,
+)
 from modules.tenancy import record_audit_event
 
 client_bp = Blueprint("client", __name__, url_prefix="/api/dashboard")
 
 LEAD_WORKFLOW_STATUSES = {"new", "qualified", "needs_review", "scheduled", "closed"}
+CONVERSATION_STATES = {"awaiting_profile_selection", "in_progress", "completed", "terminated"}
 MAX_PAGE_SIZE = 100
 
 
@@ -62,17 +68,29 @@ def overview(business_id: str):
         .select_from(MissedCallEvent)
         .where(MissedCallEvent.business_id == business_id)
     ).scalar_one()
+    open_conversations = g.db.execute(
+        select(func.count())
+        .select_from(ConversationSession)
+        .where(
+            ConversationSession.business_id == business_id,
+            ConversationSession.state.in_({"awaiting_profile_selection", "in_progress"}),
+        )
+    ).scalar_one()
 
     return jsonify(
         {
             "metrics": {
                 "total_leads": lead_count,
                 "new_leads": open_leads,
+                "open_conversations": open_conversations,
                 "missed_calls_handled": missed_calls,
             },
             "unavailable": [
-                {"key": "response_rate", "reason": "Available once conversations ship in Phase 2."},
-                {"key": "appointments", "reason": "Available once conversations ship in Phase 2."},
+                {
+                    "key": "response_rate",
+                    "reason": "Requires provider delivery timestamps; message history alone cannot calculate it.",
+                },
+                {"key": "appointments", "reason": "Calendar scheduling is not connected yet."},
             ],
         }
     ), 200
@@ -191,6 +209,63 @@ def update_lead(business_id: str, lead_id: int):
     )
     g.db.commit()
     return jsonify({"lead": lead_dto(lead)}), 200
+
+
+@client_bp.get("/businesses/<business_id>/conversations")
+@require_business_access()
+@require_module("conversations")
+def list_conversations(business_id: str):
+    page, size = _page_args()
+    search = (request.args.get("q") or "").strip().lower()
+    state = (request.args.get("state") or "").strip().lower()
+
+    if state and state not in CONVERSATION_STATES:
+        return jsonify({"error": "Invalid conversation state."}), 400
+
+    query = select(ConversationSession).where(ConversationSession.business_id == business_id)
+    if state:
+        query = query.where(ConversationSession.state == state)
+    if search:
+        pattern = f"%{search}%"
+        query = query.where(
+            or_(
+                func.lower(ConversationSession.phone).like(pattern),
+                func.lower(cast(ConversationSession.fields, String)).like(pattern),
+            )
+        )
+
+    total = g.db.execute(select(func.count()).select_from(query.subquery())).scalar_one()
+    rows = list(
+        g.db.execute(
+            query.order_by(ConversationSession.updated_at.desc(), ConversationSession.id.desc())
+            .offset((page - 1) * size)
+            .limit(size)
+        ).scalars()
+    )
+    return jsonify(
+        {
+            "items": [conversation_summary_dto(row) for row in rows],
+            "total": total,
+            "page": page,
+            "page_size": size,
+            "states": sorted(CONVERSATION_STATES),
+        }
+    ), 200
+
+
+@client_bp.get("/businesses/<business_id>/conversations/<int:conversation_id>")
+@require_business_access()
+@require_module("conversations")
+def get_conversation(business_id: str, conversation_id: int):
+    row = g.db.execute(
+        select(ConversationSession).where(
+            ConversationSession.id == conversation_id,
+            ConversationSession.business_id == business_id,
+        )
+    ).scalar_one_or_none()
+    if row is None:
+        return jsonify({"error": "Conversation not found."}), 404
+    return jsonify({"conversation": conversation_detail_dto(row)}), 200
 
 
 @client_bp.get("/businesses/<business_id>/settings")

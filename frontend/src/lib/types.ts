@@ -110,6 +110,40 @@ export interface Lead {
   updated_at: string | null;
 }
 
+export type ConversationState =
+  | "awaiting_profile_selection"
+  | "in_progress"
+  | "completed"
+  | "terminated";
+
+export interface ConversationMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ConversationSummary {
+  id: number;
+  phone: string;
+  customer_name: string | null;
+  profile_key: string | null;
+  state: ConversationState;
+  turn_count: number;
+  off_topic_strikes: number;
+  terminated: boolean;
+  opted_out: boolean;
+  requested_callback_time: string | null;
+  message_count: number;
+  last_message: string;
+  created_at: string | null;
+  updated_at: string | null;
+  expires_at: string | null;
+}
+
+export interface ConversationDetail extends ConversationSummary {
+  messages: ConversationMessage[];
+  collected_fields: Record<string, unknown>;
+}
+
 /** A metric the platform cannot honestly report yet, and why. */
 export interface UnavailableMetric {
   key: string;

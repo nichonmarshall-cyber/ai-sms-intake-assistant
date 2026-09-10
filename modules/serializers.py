@@ -105,6 +105,60 @@ def lead_dto(lead) -> dict:
     }
 
 
+def _conversation_fields(row) -> dict:
+    """Drop private workflow keys while preserving client-owned intake data."""
+    fields = row.fields or {}
+    if not isinstance(fields, dict):
+        return {}
+    return {key: value for key, value in fields.items() if not str(key).startswith("__")}
+
+
+def _conversation_messages(row) -> list[dict]:
+    messages = []
+    for item in row.history if isinstance(row.history, list) else []:
+        if not isinstance(item, dict):
+            continue
+        role = item.get("role")
+        content = item.get("content")
+        if role not in {"user", "assistant"} or not isinstance(content, str):
+            continue
+        messages.append({"role": role, "content": content})
+    return messages
+
+
+def conversation_summary_dto(row) -> dict:
+    fields = _conversation_fields(row)
+    messages = _conversation_messages(row)
+    last_message = next(
+        (item["content"] for item in reversed(messages)),
+        "",
+    )
+    return {
+        "id": row.id,
+        "phone": row.phone,
+        "customer_name": fields.get("name") or fields.get("customer_name"),
+        "profile_key": row.profile_key,
+        "state": row.state,
+        "turn_count": row.turn_count,
+        "off_topic_strikes": row.off_topic_strikes,
+        "terminated": row.terminated,
+        "opted_out": row.opted_out,
+        "requested_callback_time": row.requested_callback_time,
+        "message_count": len(messages),
+        "last_message": last_message[:240],
+        "created_at": _iso(row.created_at),
+        "updated_at": _iso(row.updated_at),
+        "expires_at": _iso(row.expires_at),
+    }
+
+
+def conversation_detail_dto(row) -> dict:
+    payload = conversation_summary_dto(row)
+    payload["messages"] = _conversation_messages(row)
+    payload["collected_fields"] = _conversation_fields(row)
+    return payload
+
+
 def session_dto(row) -> dict:
     """Deliberately omits token_hash, csrf_hash, and ip_hash."""
     return {

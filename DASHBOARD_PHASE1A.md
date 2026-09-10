@@ -13,6 +13,12 @@ notes, status updates, and reversible archive/restore actions. Owners, managers,
 and staff may update leads; viewers and platform staff remain read-only. Every
 mutation writes a tenant-scoped audit event.
 
+The client **Conversations** module now provides a searchable, filterable list
+of stored SMS sessions and a sanitized message timeline with collected intake
+fields. It displays only messages retained by the conversation engine (the most
+recent `MAX_HISTORY`, currently 12 by default); because individual messages do
+not yet carry timestamps, the UI does not invent per-message times.
+
 ## What is deliberately NOT deployed
 
 `render.yaml` is unchanged. Render still runs `pip install -r requirements.txt`

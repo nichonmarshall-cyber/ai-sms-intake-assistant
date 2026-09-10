@@ -20,7 +20,14 @@ from sqlalchemy import select
 from modules import entitlements
 from modules.auth import passwords
 from modules.db import get_database_url, init_db, is_sqlite, session_scope
-from modules.models import Business, BusinessMembership, Lead, MissedCallEvent, PlatformUser
+from modules.models import (
+    Business,
+    BusinessMembership,
+    ConversationSession,
+    Lead,
+    MissedCallEvent,
+    PlatformUser,
+)
 from modules.tenancy import ensure_legacy_business, record_audit_event
 
 
@@ -76,6 +83,103 @@ SAMPLE_LEADS = (
         "service": "Weekly lawn service",
         "workflow_status": "qualified",
         "hours_ago": 48,
+    },
+)
+
+SAMPLE_CONVERSATIONS = (
+    {
+        "phone": "+12145550101",
+        "name": "Jason Carter",
+        "service_request": "Brake inspection",
+        "state": "in_progress",
+        "profile_key": "auto_repair",
+        "minutes_ago": 8,
+        "history": [
+            {"role": "user", "content": "Hi, my brakes started squeaking this morning."},
+            {
+                "role": "assistant",
+                "content": "I can help collect a few details for the shop. What is your name?",
+            },
+            {"role": "user", "content": "Jason Carter."},
+            {
+                "role": "assistant",
+                "content": "Thanks, Jason. What year, make, and model is the vehicle?",
+            },
+            {"role": "user", "content": "2018 Honda Accord."},
+            {
+                "role": "assistant",
+                "content": "Got it. Is there a preferred time for the team to call you back?",
+            },
+        ],
+        "fields": {
+            "name": "Jason Carter",
+            "service_request": "Brake inspection",
+            "vehicle_year": "2018",
+            "vehicle_make": "Honda",
+            "vehicle_model": "Accord",
+        },
+    },
+    {
+        "phone": "+12145550102",
+        "name": "Sarah Mitchell",
+        "service_request": "AC not blowing cold",
+        "state": "completed",
+        "profile_key": "auto_repair",
+        "minutes_ago": 42,
+        "history": [
+            {"role": "user", "content": "My AC blows warm when I am sitting still."},
+            {
+                "role": "assistant",
+                "content": "I can pass that along. What is your name and vehicle?",
+            },
+            {"role": "user", "content": "Sarah Mitchell, 2020 Toyota RAV4."},
+            {
+                "role": "assistant",
+                "content": "What time is best for the shop to follow up?",
+            },
+            {"role": "user", "content": "Tomorrow after 1 PM."},
+            {
+                "role": "assistant",
+                "content": "Thanks, Sarah. The team will follow up to confirm availability and pricing.",
+            },
+        ],
+        "fields": {
+            "name": "Sarah Mitchell",
+            "service_request": "AC not blowing cold",
+            "vehicle_year": "2020",
+            "vehicle_make": "Toyota",
+            "vehicle_model": "RAV4",
+            "preferred_callback_time": "Tomorrow after 1 PM",
+        },
+    },
+    {
+        "phone": "+12145550103",
+        "name": "Michael Rodriguez",
+        "service_request": "Check engine light",
+        "state": "completed",
+        "profile_key": "auto_repair",
+        "minutes_ago": 95,
+        "history": [
+            {"role": "user", "content": "My check engine light came on. Can I still drive it?"},
+            {
+                "role": "assistant",
+                "content": "If the light is flashing or the vehicle is running poorly, stop driving and seek immediate help. Is the light solid or flashing?",
+            },
+            {"role": "user", "content": "Solid. The car feels normal."},
+            {
+                "role": "assistant",
+                "content": "Thanks. I can collect your details so the shop can advise you. What is your name?",
+            },
+            {"role": "user", "content": "Michael Rodriguez."},
+            {
+                "role": "assistant",
+                "content": "The team will follow up. If the light begins flashing or the car changes behavior, stop driving it.",
+            },
+        ],
+        "fields": {
+            "name": "Michael Rodriguez",
+            "service_request": "Check engine light",
+        },
     },
 )
 
@@ -161,7 +265,7 @@ def _ensure_membership(db, *, business_id: str, user_id: str) -> None:
         membership.role = "owner"
 
 
-def _seed_activity(db, *, business_id: str) -> tuple[int, int]:
+def _seed_activity(db, *, business_id: str) -> tuple[int, int, int]:
     now = datetime.now(timezone.utc)
     lead_count = 0
     for item in SAMPLE_LEADS:
@@ -219,7 +323,37 @@ def _seed_activity(db, *, business_id: str) -> tuple[int, int]:
             )
         )
         call_count += 1
-    return lead_count, call_count
+    conversation_count = 0
+    for item in SAMPLE_CONVERSATIONS:
+        existing = db.execute(
+            select(ConversationSession).where(
+                ConversationSession.business_id == business_id,
+                ConversationSession.phone == item["phone"],
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            continue
+        updated_at = now - timedelta(minutes=item["minutes_ago"])
+        db.add(
+            ConversationSession(
+                business_id=business_id,
+                phone=item["phone"],
+                state=item["state"],
+                profile_key=item["profile_key"],
+                history=item["history"],
+                fields=item["fields"],
+                turn_count=sum(1 for message in item["history"] if message["role"] == "assistant"),
+                off_topic_strikes=0,
+                terminated=False,
+                opted_out=False,
+                requested_callback_time=item["fields"].get("preferred_callback_time"),
+                created_at=updated_at - timedelta(minutes=12),
+                updated_at=updated_at,
+                expires_at=now + timedelta(hours=12),
+            )
+        )
+        conversation_count += 1
+    return lead_count, call_count, conversation_count
 
 
 def main() -> int:
@@ -247,7 +381,9 @@ def main() -> int:
             password=password,
         )
         _ensure_membership(db, business_id=business.id, user_id=user.id)
-        leads_added, calls_added = _seed_activity(db, business_id=business.id)
+        leads_added, calls_added, conversations_added = _seed_activity(
+            db, business_id=business.id
+        )
         record_audit_event(
             db,
             action="local.demo.seed",
@@ -255,7 +391,11 @@ def main() -> int:
             target_id=business.id,
             business_id=business.id,
             actor_user_id=user.id,
-            details={"leads_added": leads_added, "missed_calls_added": calls_added},
+            details={
+                "leads_added": leads_added,
+                "missed_calls_added": calls_added,
+                "conversations_added": conversations_added,
+            },
         )
         db.commit()
     except ValueError as exc:
@@ -267,6 +407,7 @@ def main() -> int:
 
     print(f"Local demo ready for {args.email.strip().lower()}.")
     print(f"Seeded {leads_added} new leads and {calls_added} new missed calls.")
+    print(f"Seeded {conversations_added} stored conversation timelines.")
     print(f"Open /login; the client account will route to /b/{LOCAL_CLIENT_BUSINESS_ID}.")
     return 0
 

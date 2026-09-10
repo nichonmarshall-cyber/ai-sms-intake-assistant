@@ -97,7 +97,7 @@ def test_toggling_an_unknown_module_is_rejected(demo_app):
 def test_unimplemented_modules_are_flagged_not_faked(demo_app):
     """Phase 1a must never present mock Website/SEO/Analytics data."""
     implemented = {s.key for s in entitlements.MODULE_REGISTRY if s.implemented}
-    assert implemented == {"overview", "leads", "settings"}
+    assert implemented == {"overview", "leads", "conversations", "settings"}
 
     for key in ("website", "local_seo", "analytics", "reviews", "campaigns", "coupons"):
         assert entitlements.MODULES_BY_KEY[key].implemented is False
