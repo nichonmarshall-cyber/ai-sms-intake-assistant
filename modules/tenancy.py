@@ -27,6 +27,24 @@ from modules.profiles import PROFILES, resolve_profile_key
 
 LEGACY_BUSINESS_ID = "legacy-demo"
 
+LEGACY_DEMO_SETTINGS = {
+    "intake": {
+        "enabled_profiles": [
+            "auto_repair",
+            "roofing",
+            "painting",
+            "lawn_care",
+            "catering",
+        ],
+        "default_profile_key": None,
+        "selection_mode": "menu",
+        "demo_disclaimer": True,
+    },
+    "missed_calls": {
+        "enabled": False,
+    },
+}
+
 
 DEFAULT_BUSINESS_SETTINGS = {
     "intake": {
@@ -94,21 +112,43 @@ def effective_settings(business: Business, phone_number: BusinessPhoneNumber) ->
 
 
 def ensure_legacy_business(db: DBSession) -> Business:
-    """Creates the compatibility tenant used while dynamic routing is disabled."""
+    """Creates or repairs the compatibility tenant used by the local demo.
+
+    PostgreSQL receives these settings through Alembic. Local SQLite uses
+    ``Base.metadata.create_all()``, so this bootstrap must provide the same
+    values and default module entitlements. The repair is intentionally narrow:
+    a non-empty, migrated settings object is never overwritten.
+    """
     existing = db.get(Business, LEGACY_BUSINESS_ID)
     if existing is not None:
+        if not existing.settings:
+            existing.settings = deepcopy(LEGACY_DEMO_SETTINGS)
+            db.commit()
+            db.refresh(existing)
+        _ensure_legacy_modules(db, existing.id)
         return existing
     business = Business(
         id=LEGACY_BUSINESS_ID,
         name="NTX Automation Co. Demo",
         slug="ntx-demo",
         status="active",
-        settings={},
+        settings=deepcopy(LEGACY_DEMO_SETTINGS),
     )
     db.add(business)
+    db.flush()
+    _ensure_legacy_modules(db, business.id, commit=False)
     db.commit()
     db.refresh(business)
     return business
+
+
+def _ensure_legacy_modules(db: DBSession, business_id: str, *, commit: bool = True) -> None:
+    """Seeds the dashboard modules without creating a module import cycle."""
+    from modules import entitlements
+
+    entitlements.apply_defaults(db, business_id)
+    if commit:
+        db.commit()
 
 
 def resolve_inbound_business(db: DBSession, twilio_to_number: str) -> TenantContext | None:

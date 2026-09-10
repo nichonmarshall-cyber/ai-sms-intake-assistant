@@ -16,7 +16,8 @@ item of Phase 1b.
 
 ## Local setup
 
-Backend (PowerShell, Windows):
+Backend (PowerShell, Windows). SQLite is the fastest safe local setup; Render
+continues to use PostgreSQL:
 
 ```powershell
 cd "E:\.Projects\smsIntake_assistant V4"
@@ -24,13 +25,30 @@ py -m pip install -r requirements-dev.txt
 
 # Phase 1a needs SECRET_KEY: it keys the HMAC used to hash client IPs.
 $env:SECRET_KEY = "a-long-random-local-value"
-$env:DATABASE_URL = "postgresql://user:password@localhost:5432/ntx_dev"
+$env:DATABASE_URL = "sqlite:///sms_intake_dev.db"
 $env:FLASK_ENV = "development"          # allows the session cookie over local HTTP
+$env:APP_MODE = "demo"
 
 py -m alembic upgrade head
-py scripts/create_admin.py --email you@ntxautomationco.com
+py -m scripts.create_admin --email you@ntxautomationco.com
 py app.py                                # serves on http://127.0.0.1:5000
 ```
+
+To preview the client-facing dashboard with repeatable sample activity, stop
+Flask once after the migration and run:
+
+```powershell
+py -m scripts.seed_local_demo --email client@ntx.local
+```
+
+The command prompts for a client password, repairs the `legacy-demo` settings,
+creates a separate local `Miller Auto Care` client tenant, grants that client an
+owner membership, and adds idempotent sample leads/missed calls. It refuses to
+run against PostgreSQL or when `FLASK_ENV=production`.
+
+If you prefer a local PostgreSQL server, replace `DATABASE_URL` with its local
+connection string. Never use the live Render connection string for dashboard
+development.
 
 Frontend, in a second terminal:
 

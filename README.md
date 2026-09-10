@@ -119,7 +119,10 @@ alembic upgrade head
 ```
 
 (SQLite for local dev also auto-creates tables on startup as a convenience;
-Postgres deployments always require running migrations explicitly.)
+Postgres deployments always require running migrations explicitly.) Dashboard
+accounts should be created from the repository root with
+`python -m scripts.create_admin --email you@example.com` so Python resolves the
+project packages correctly.
 
 ### 4. Run
 

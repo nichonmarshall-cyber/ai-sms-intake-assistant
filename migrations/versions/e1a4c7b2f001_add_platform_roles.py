@@ -34,4 +34,5 @@ def upgrade() -> None:
 def downgrade() -> None:
     # is_platform_admin was never dropped, so no access is lost on the way down.
     op.drop_index("ix_platform_users_platform_role", table_name="platform_users")
-    op.drop_column("platform_users", "platform_role")
+    with op.batch_alter_table("platform_users") as batch_op:
+        batch_op.drop_column("platform_role")

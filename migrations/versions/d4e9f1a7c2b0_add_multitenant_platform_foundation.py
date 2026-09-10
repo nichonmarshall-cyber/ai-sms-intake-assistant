@@ -9,6 +9,7 @@ application will switch to dynamic inbound-number routing in the next change;
 this migration deliberately preserves every existing lead and call event.
 """
 
+from datetime import datetime, timezone
 from typing import Sequence, Union
 
 from alembic import op
@@ -22,6 +23,20 @@ depends_on: Union[str, Sequence[str], None] = None
 
 
 LEGACY_BUSINESS_ID = "legacy-demo"
+LEGACY_DEMO_SETTINGS = {
+    "intake": {
+        "selection_mode": "menu",
+        "demo_disclaimer": True,
+        "enabled_profiles": [
+            "auto_repair",
+            "roofing",
+            "painting",
+            "lawn_care",
+            "catering",
+        ],
+    },
+    "missed_calls": {"enabled": False},
+}
 
 
 def upgrade() -> None:
@@ -95,101 +110,137 @@ def upgrade() -> None:
     )
     op.create_index("ix_audit_events_business_created", "audit_events", ["business_id", "created_at"])
 
-    op.add_column(
-        "leads", sa.Column("workflow_status", sa.String(length=32), nullable=False, server_default="new")
-    )
-    op.add_column("leads", sa.Column("client_notes", sa.Text(), nullable=True))
-    op.add_column("leads", sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column("leads", sa.Column("archived_by_user_id", sa.String(length=36), nullable=True))
-    op.create_foreign_key(
-        "fk_leads_archived_by_user_id",
-        "leads",
-        "platform_users",
-        ["archived_by_user_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
-    op.add_column("missed_call_events", sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True))
-    op.add_column(
-        "missed_call_events", sa.Column("archived_by_user_id", sa.String(length=36), nullable=True)
-    )
-    op.create_foreign_key(
-        "fk_missed_call_events_archived_by_user_id",
-        "missed_call_events",
-        "platform_users",
-        ["archived_by_user_id"],
-        ["id"],
-        ondelete="SET NULL",
-    )
+    with op.batch_alter_table("leads") as batch_op:
+        batch_op.add_column(
+            sa.Column("workflow_status", sa.String(length=32), nullable=False, server_default="new")
+        )
+        batch_op.add_column(sa.Column("client_notes", sa.Text(), nullable=True))
+        batch_op.add_column(sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True))
+        batch_op.add_column(sa.Column("archived_by_user_id", sa.String(length=36), nullable=True))
+        batch_op.create_foreign_key(
+            "fk_leads_archived_by_user_id",
+            "platform_users",
+            ["archived_by_user_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
 
-    # Static PostgreSQL SQL is intentional: Alembic cannot render a Python dict
-    # as a JSON literal during `alembic upgrade --sql`. json_build_object also
-    # avoids SQLAlchemy interpreting JSON colon tokens as bind parameters.
-    op.execute(
-        """
-        INSERT INTO businesses
-            (id, name, slug, status, default_profile_key, settings, created_at, updated_at)
-        VALUES
-            (
-                'legacy-demo',
-                'NTX Automation Co. Demo',
-                'ntx-demo',
-                'active',
-                NULL,
-                json_build_object(
-                    'intake', json_build_object(
-                        'selection_mode', 'menu',
-                        'demo_disclaimer', TRUE,
-                        'enabled_profiles', json_build_array(
-                            'auto_repair', 'roofing', 'painting', 'lawn_care', 'catering'
-                        )
+    with op.batch_alter_table("missed_call_events") as batch_op:
+        batch_op.add_column(sa.Column("archived_at", sa.DateTime(timezone=True), nullable=True))
+        batch_op.add_column(sa.Column("archived_by_user_id", sa.String(length=36), nullable=True))
+        batch_op.create_foreign_key(
+            "fk_missed_call_events_archived_by_user_id",
+            "platform_users",
+            ["archived_by_user_id"],
+            ["id"],
+            ondelete="SET NULL",
+        )
+
+    if op.get_context().dialect.name == "postgresql":
+        # PostgreSQL's static form keeps `alembic upgrade --sql` renderable;
+        # SQLAlchemy cannot literalize a Python dictionary as JSON offline.
+        op.execute(
+            """
+            INSERT INTO businesses
+                (id, name, slug, status, default_profile_key, settings, created_at, updated_at)
+            VALUES
+                (
+                    'legacy-demo',
+                    'NTX Automation Co. Demo',
+                    'ntx-demo',
+                    'active',
+                    NULL,
+                    json_build_object(
+                        'intake', json_build_object(
+                            'selection_mode', 'menu',
+                            'demo_disclaimer', TRUE,
+                            'enabled_profiles', json_build_array(
+                                'auto_repair', 'roofing', 'painting', 'lawn_care', 'catering'
+                            )
+                        ),
+                        'missed_calls', json_build_object('enabled', FALSE)
                     ),
-                    'missed_calls', json_build_object('enabled', FALSE)
-                ),
-                CURRENT_TIMESTAMP,
-                CURRENT_TIMESTAMP
-            )
-        """
-    )
+                    CURRENT_TIMESTAMP,
+                    CURRENT_TIMESTAMP
+                )
+            """
+        )
+    else:
+        businesses = sa.table(
+            "businesses",
+            sa.column("id", sa.String(length=36)),
+            sa.column("name", sa.String(length=160)),
+            sa.column("slug", sa.String(length=96)),
+            sa.column("status", sa.String(length=24)),
+            sa.column("default_profile_key", sa.String(length=32)),
+            sa.column("settings", sa.JSON()),
+            sa.column("created_at", sa.DateTime(timezone=True)),
+            sa.column("updated_at", sa.DateTime(timezone=True)),
+        )
+        now = datetime.now(timezone.utc)
+        op.bulk_insert(
+            businesses,
+            [
+                {
+                    "id": LEGACY_BUSINESS_ID,
+                    "name": "NTX Automation Co. Demo",
+                    "slug": "ntx-demo",
+                    "status": "active",
+                    "default_profile_key": None,
+                    "settings": LEGACY_DEMO_SETTINGS,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            ],
+        )
 
     # Keep columns nullable in this migration so it can safely apply to a live
     # deployment before the runtime routing cutover. The next migration makes
     # them required after new code writes business_id on every record.
     for table in ("conversation_sessions", "leads", "processed_messages", "missed_call_events"):
-        op.add_column(table, sa.Column("business_id", sa.String(length=36), nullable=True))
-        op.create_foreign_key(
-            f"fk_{table}_business_id", table, "businesses", ["business_id"], ["id"], ondelete="RESTRICT"
-        )
+        with op.batch_alter_table(table) as batch_op:
+            batch_op.add_column(sa.Column("business_id", sa.String(length=36), nullable=True))
+            batch_op.create_foreign_key(
+                f"fk_{table}_business_id",
+                "businesses",
+                ["business_id"],
+                ["id"],
+                ondelete="RESTRICT",
+            )
+            if table == "conversation_sessions":
+                batch_op.drop_constraint("uq_conversation_sessions_phone", type_="unique")
+                batch_op.create_unique_constraint(
+                    "uq_conversation_sessions_business_phone", ["business_id", "phone"]
+                )
         op.create_index(f"ix_{table}_business_id", table, ["business_id"])
         op.execute(sa.text(f"UPDATE {table} SET business_id = :business_id WHERE business_id IS NULL").bindparams(
             business_id=LEGACY_BUSINESS_ID
         ))
 
-    op.drop_constraint("uq_conversation_sessions_phone", "conversation_sessions", type_="unique")
-    op.create_unique_constraint(
-        "uq_conversation_sessions_business_phone", "conversation_sessions", ["business_id", "phone"]
-    )
-
 
 def downgrade() -> None:
-    op.drop_constraint("uq_conversation_sessions_business_phone", "conversation_sessions", type_="unique")
-    op.create_unique_constraint("uq_conversation_sessions_phone", "conversation_sessions", ["phone"])
-
     for table in ("missed_call_events", "processed_messages", "leads", "conversation_sessions"):
         op.drop_index(f"ix_{table}_business_id", table_name=table)
-        op.drop_constraint(f"fk_{table}_business_id", table, type_="foreignkey")
-        op.drop_column(table, "business_id")
+        with op.batch_alter_table(table) as batch_op:
+            if table == "conversation_sessions":
+                batch_op.drop_constraint(
+                    "uq_conversation_sessions_business_phone", type_="unique"
+                )
+                batch_op.create_unique_constraint("uq_conversation_sessions_phone", ["phone"])
+            batch_op.drop_constraint(f"fk_{table}_business_id", type_="foreignkey")
+            batch_op.drop_column("business_id")
 
-    op.drop_constraint(
-        "fk_missed_call_events_archived_by_user_id", "missed_call_events", type_="foreignkey"
-    )
-    op.drop_column("missed_call_events", "archived_by_user_id")
-    op.drop_column("missed_call_events", "archived_at")
-    op.drop_constraint("fk_leads_archived_by_user_id", "leads", type_="foreignkey")
-    op.drop_column("leads", "archived_by_user_id")
-    op.drop_column("leads", "archived_at")
-    op.drop_column("leads", "client_notes")
-    op.drop_column("leads", "workflow_status")
+    with op.batch_alter_table("missed_call_events") as batch_op:
+        batch_op.drop_constraint("fk_missed_call_events_archived_by_user_id", type_="foreignkey")
+        batch_op.drop_column("archived_by_user_id")
+        batch_op.drop_column("archived_at")
+
+    with op.batch_alter_table("leads") as batch_op:
+        batch_op.drop_constraint("fk_leads_archived_by_user_id", type_="foreignkey")
+        batch_op.drop_column("archived_by_user_id")
+        batch_op.drop_column("archived_at")
+        batch_op.drop_column("client_notes")
+        batch_op.drop_column("workflow_status")
 
     op.drop_index("ix_audit_events_business_created", table_name="audit_events")
     op.drop_table("audit_events")

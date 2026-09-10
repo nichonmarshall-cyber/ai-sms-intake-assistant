@@ -3,7 +3,7 @@
 Chicken-and-egg fix: /api/admin/users requires an existing admin, so the very
 first one has to be made out of band.
 
-    py scripts/create_admin.py --email you@ntxautomationco.com
+    py -m scripts.create_admin --email you@ntxautomationco.com
 
 The password is read from a prompt, never from argv, so it does not land in
 shell history or the process list.
