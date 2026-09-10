@@ -62,6 +62,18 @@ export interface PhoneNumber {
   enabled: boolean;
 }
 
+export interface MissedCallEvent {
+  id: number;
+  caller_phone: string;
+  twilio_number: string;
+  forwarded_from: string | null;
+  source: string;
+  decision: string;
+  message_sid: string | null;
+  archived_at: string | null;
+  created_at: string | null;
+}
+
 export interface Membership {
   id: number;
   business_id: string;

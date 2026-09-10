@@ -9,6 +9,7 @@ import type {
   Paged,
   PhoneNumber,
   UnavailableMetric,
+  User,
 } from "../../lib/types";
 import {
   Badge,
@@ -249,13 +250,100 @@ function BusinessDetail() {
     `/api/admin/businesses/${businessId}`,
     [businessId],
   );
+  const users = useResource<{ items: User[] }>("/api/admin/users");
   const [saving, setSaving] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [phone, setPhone] = useState("");
+  const [phoneLabel, setPhoneLabel] = useState("");
+  const [phoneErrors, setPhoneErrors] = useState<Record<string, string>>({});
+  const [selectedUserId, setSelectedUserId] = useState("");
+  const [selectedRole, setSelectedRole] = useState("staff");
+  const [newUserName, setNewUserName] = useState("");
+  const [newUserEmail, setNewUserEmail] = useState("");
+  const [newUserPassword, setNewUserPassword] = useState("");
+  const [newUserRole, setNewUserRole] = useState("owner");
+  const [userErrors, setUserErrors] = useState<Record<string, string>>({});
+
+  const runAction = async (key: string, action: () => Promise<void>) => {
+    setSaving(key);
+    setActionError(null);
+    try {
+      await action();
+      await reload();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "The change could not be saved.");
+    } finally {
+      setSaving(null);
+    }
+  };
 
   const toggleModule = async (key: string, enabled: boolean) => {
-    setSaving(key);
-    try {
+    await runAction(`module-${key}`, async () => {
       await api.put(`/api/admin/businesses/${businessId}/modules/${key}`, { enabled });
+    });
+  };
+
+  const changeStatus = async () => {
+    if (!data) return;
+    const status = data.business.status === "active" ? "suspended" : "active";
+    if (status === "suspended" && !window.confirm("Suspend this tenant and stop its inbound routing?")) return;
+    await runAction("business-status", async () => {
+      await api.patch(`/api/admin/businesses/${businessId}`, { status });
+    });
+  };
+
+  const addPhone = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setPhoneErrors({});
+    setSaving("add-phone");
+    setActionError(null);
+    try {
+      await api.post(`/api/admin/businesses/${businessId}/phone-numbers`, {
+        phone,
+        label: phoneLabel,
+      });
+      setPhone("");
+      setPhoneLabel("");
       await reload();
+    } catch (err) {
+      const apiErr = err as { fields?: Record<string, string>; message?: string };
+      setPhoneErrors(apiErr.fields ?? {});
+      setActionError(apiErr.message ?? "Could not assign the phone number.");
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const saveMembership = async (userId: string, role: string) => {
+    await runAction(`membership-${userId}`, async () => {
+      await api.post(`/api/admin/businesses/${businessId}/memberships`, { user_id: userId, role });
+    });
+  };
+
+  const createClientUser = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setUserErrors({});
+    setSaving("create-user");
+    setActionError(null);
+    try {
+      const user = await api.post<User>("/api/admin/users", {
+        display_name: newUserName,
+        email: newUserEmail,
+        password: newUserPassword,
+        platform_role: "none",
+      });
+      await api.post(`/api/admin/businesses/${businessId}/memberships`, {
+        user_id: user.id,
+        role: newUserRole,
+      });
+      setNewUserName("");
+      setNewUserEmail("");
+      setNewUserPassword("");
+      await Promise.all([reload(), users.reload()]);
+    } catch (err) {
+      const apiErr = err as { fields?: Record<string, string>; message?: string };
+      setUserErrors(apiErr.fields ?? {});
+      setActionError(apiErr.message ?? "Could not create the client user.");
     } finally {
       setSaving(null);
     }
@@ -282,6 +370,41 @@ function BusinessDetail() {
         <Stat label="Users" value={data.memberships.length} icon="◈" />
       </div>
 
+      {actionError && <ErrorState body={actionError} />}
+
+      <div className="admin-management-grid">
+        <Card title="Tenant status">
+          <p className="management-copy">
+            Active tenants can receive routed traffic. Suspending a tenant blocks inbound
+            routing without deleting its data.
+          </p>
+          <div className="management-action-row">
+            <Badge tone={data.business.status === "active" ? "ok" : "warn"}>
+              {data.business.status}
+            </Badge>
+            <button
+              type="button"
+              className={data.business.status === "active" ? "btn" : "btn btn--primary"}
+              disabled={saving === "business-status"}
+              onClick={changeStatus}
+            >
+              {data.business.status === "active" ? "Suspend tenant" : "Reactivate tenant"}
+            </button>
+          </div>
+        </Card>
+
+        <Card title="Access summary">
+          <p className="management-copy">
+            {data.memberships.length} client user{data.memberships.length === 1 ? "" : "s"} can
+            access this tenant. Roles are enforced by the API on every request.
+          </p>
+          <div className="management-action-row">
+            <strong>{data.memberships.filter((item) => item.role === "owner").length}</strong>
+            <span>owners</span>
+          </div>
+        </Card>
+      </div>
+
       <Card title="Module entitlements">
         <p style={{ color: "var(--ntx-muted)", marginTop: 0 }}>
           Disabled modules are hidden from this client's navigation and refused by the
@@ -299,7 +422,7 @@ function BusinessDetail() {
             <button
               type="button"
               className={module.enabled ? "btn btn--primary" : "btn"}
-              disabled={saving === module.key}
+              disabled={saving === `module-${module.key}`}
               aria-pressed={module.enabled}
               onClick={() => toggleModule(module.key, !module.enabled)}
             >
@@ -311,6 +434,29 @@ function BusinessDetail() {
 
       <div style={{ marginTop: 24 }}>
         <Card title="Phone numbers">
+          <form className="inline-form-grid" onSubmit={addPhone} noValidate>
+            <Field label="Twilio number" id="tenant-phone" error={phoneErrors.phone}>
+              <input
+                id="tenant-phone"
+                className="input"
+                value={phone}
+                placeholder="+18175550142"
+                onChange={(event) => setPhone(event.target.value)}
+              />
+            </Field>
+            <Field label="Label" id="tenant-phone-label">
+              <input
+                id="tenant-phone-label"
+                className="input"
+                value={phoneLabel}
+                placeholder="Front desk"
+                onChange={(event) => setPhoneLabel(event.target.value)}
+              />
+            </Field>
+            <button className="btn btn--primary inline-form-grid__button" disabled={saving === "add-phone"}>
+              Assign number
+            </button>
+          </form>
           {data.phone_numbers.length === 0 ? (
             <EmptyState
               title="No number assigned"
@@ -324,6 +470,7 @@ function BusinessDetail() {
                     <th scope="col">Number</th>
                     <th scope="col">Label</th>
                     <th scope="col">Enabled</th>
+                    <th scope="col">Action</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -336,12 +483,123 @@ function BusinessDetail() {
                           {number.enabled ? "Yes" : "No"}
                         </Badge>
                       </td>
+                      <td data-label="Action">
+                        <button
+                          type="button"
+                          className="btn"
+                          disabled={saving === `phone-${number.id}`}
+                          onClick={() => runAction(`phone-${number.id}`, async () => {
+                            await api.patch(
+                              `/api/admin/businesses/${businessId}/phone-numbers/${number.id}`,
+                              { enabled: !number.enabled },
+                            );
+                          })}
+                        >
+                          {number.enabled ? "Disable" : "Enable"}
+                        </button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
               </table>
             </div>
           )}
+        </Card>
+      </div>
+
+      <div className="admin-management-grid admin-management-grid--wide">
+        <Card title="Tenant access">
+          {data.memberships.length === 0 ? (
+            <EmptyState title="No client users" body="Create or attach a user to grant dashboard access." />
+          ) : (
+            <div className="management-list">
+              {data.memberships.map((membership) => (
+                <div className="management-list__item" key={membership.id}>
+                  <span>
+                    <strong>{membership.user?.display_name || membership.user?.email || membership.user_id}</strong>
+                    <small>{membership.user?.email}</small>
+                  </span>
+                  <select
+                    className="input management-list__role"
+                    aria-label={`Role for ${membership.user?.email || membership.user_id}`}
+                    value={membership.role}
+                    disabled={saving === `membership-${membership.user_id}`}
+                    onChange={(event) => saveMembership(membership.user_id, event.target.value)}
+                  >
+                    <option value="owner">Owner</option>
+                    <option value="manager">Manager</option>
+                    <option value="staff">Staff</option>
+                    <option value="viewer">Viewer</option>
+                  </select>
+                  <button
+                    type="button"
+                    className="btn"
+                    disabled={saving === `remove-${membership.id}`}
+                    onClick={() => {
+                      if (!window.confirm("Remove this user's access to the tenant?")) return;
+                      void runAction(`remove-${membership.id}`, async () => {
+                        await api.delete(`/api/admin/businesses/${businessId}/memberships/${membership.id}`);
+                      });
+                    }}
+                  >
+                    Remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          <form className="attach-user-form" onSubmit={(event) => {
+            event.preventDefault();
+            if (selectedUserId) void saveMembership(selectedUserId, selectedRole);
+          }}>
+            <label htmlFor="existing-user">Attach an existing user</label>
+            <div className="attach-user-form__row">
+              <select
+                id="existing-user"
+                className="input"
+                value={selectedUserId}
+                onChange={(event) => setSelectedUserId(event.target.value)}
+              >
+                <option value="">Select user…</option>
+                {users.data?.items.map((user) => (
+                  <option value={user.id} key={user.id}>{user.display_name || user.email} · {user.email}</option>
+                ))}
+              </select>
+              <select className="input" aria-label="New membership role" value={selectedRole} onChange={(event) => setSelectedRole(event.target.value)}>
+                <option value="owner">Owner</option>
+                <option value="manager">Manager</option>
+                <option value="staff">Staff</option>
+                <option value="viewer">Viewer</option>
+              </select>
+              <button className="btn btn--primary" disabled={!selectedUserId || saving === `membership-${selectedUserId}`}>
+                Grant access
+              </button>
+            </div>
+          </form>
+        </Card>
+
+        <Card title="Create client user">
+          <form onSubmit={createClientUser} noValidate>
+            <Field label="Display name" id="client-user-name">
+              <input id="client-user-name" className="input" value={newUserName} onChange={(event) => setNewUserName(event.target.value)} />
+            </Field>
+            <Field label="Email" id="client-user-email" error={userErrors.email}>
+              <input id="client-user-email" className="input" type="email" value={newUserEmail} onChange={(event) => setNewUserEmail(event.target.value)} />
+            </Field>
+            <Field label="Temporary password" id="client-user-password" error={userErrors.password}>
+              <input id="client-user-password" className="input" type="password" value={newUserPassword} onChange={(event) => setNewUserPassword(event.target.value)} />
+            </Field>
+            <Field label="Tenant role" id="client-user-role">
+              <select id="client-user-role" className="input" value={newUserRole} onChange={(event) => setNewUserRole(event.target.value)}>
+                <option value="owner">Owner</option>
+                <option value="manager">Manager</option>
+                <option value="staff">Staff</option>
+                <option value="viewer">Viewer</option>
+              </select>
+            </Field>
+            <button className="btn btn--primary" disabled={saving === "create-user"}>Create and grant access</button>
+          </form>
         </Card>
       </div>
     </>

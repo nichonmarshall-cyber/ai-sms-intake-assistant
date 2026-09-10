@@ -55,6 +55,20 @@ def phone_number_dto(number) -> dict:
     }
 
 
+def missed_call_dto(event) -> dict:
+    return {
+        "id": event.id,
+        "caller_phone": event.caller_phone,
+        "twilio_number": event.twilio_number,
+        "forwarded_from": event.forwarded_from,
+        "source": event.source,
+        "decision": event.decision,
+        "message_sid": event.message_sid,
+        "archived_at": _iso(event.archived_at),
+        "created_at": _iso(event.created_at),
+    }
+
+
 def membership_dto(membership, *, user=None) -> dict:
     payload = {
         "id": membership.id,

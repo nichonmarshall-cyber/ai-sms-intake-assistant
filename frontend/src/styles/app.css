@@ -678,6 +678,183 @@
   }
 }
 
+/* AI Intake -------------------------------------------------------------- */
+.intake-overview-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.65fr) minmax(420px, 1.35fr);
+  align-items: start;
+  gap: var(--space-4);
+}
+.intake-section {
+  margin-top: var(--space-4);
+}
+.behavior-list {
+  margin: 0;
+}
+.behavior-list > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--ntx-border);
+}
+.behavior-list > div:last-child {
+  border-bottom: 0;
+}
+.behavior-list dt {
+  color: var(--ntx-body);
+  font-size: 12px;
+}
+.behavior-list dd {
+  color: var(--ntx-white);
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0;
+}
+.behavior-list .behavior-list__unavailable {
+  color: var(--ntx-muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+.compact-activity-list {
+  display: flex;
+  flex-direction: column;
+}
+.compact-activity-list__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--ntx-border);
+}
+.compact-activity-list__item:last-child {
+  border-bottom: 0;
+}
+.compact-activity-list__item > span:first-child {
+  min-width: 0;
+}
+.compact-activity-list__item strong,
+.compact-activity-list__item small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.compact-activity-list__item strong {
+  color: var(--ntx-white);
+  font-size: 12px;
+}
+.compact-activity-list__item small {
+  color: var(--ntx-muted);
+  font-size: 11px;
+  margin-top: 4px;
+}
+.compact-activity-list__item:hover strong {
+  color: var(--ntx-orange-light);
+}
+
+@media (max-width: 900px) {
+  .intake-overview-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Tenant administration -------------------------------------------------- */
+.admin-management-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.admin-management-grid--wide {
+  grid-template-columns: minmax(460px, 1.35fr) minmax(320px, 0.65fr);
+  margin-top: var(--space-4);
+}
+.management-copy {
+  color: var(--ntx-muted);
+  font-size: 12px;
+  line-height: 1.6;
+  margin: 0 0 var(--space-4);
+}
+.management-action-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+.management-action-row .btn {
+  margin-left: auto;
+}
+.inline-form-grid {
+  display: grid;
+  grid-template-columns: minmax(240px, 1fr) minmax(180px, 0.7fr) auto;
+  align-items: end;
+  gap: var(--space-3);
+  margin-bottom: var(--space-5);
+}
+.inline-form-grid .field {
+  margin-bottom: 0;
+}
+.inline-form-grid__button {
+  min-height: 42px;
+}
+.management-list {
+  display: flex;
+  flex-direction: column;
+}
+.management-list__item {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) 130px auto;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--ntx-border);
+}
+.management-list__item strong,
+.management-list__item small {
+  display: block;
+}
+.management-list__item small {
+  color: var(--ntx-muted);
+  margin-top: 3px;
+}
+.management-list__role {
+  min-width: 0;
+}
+.attach-user-form {
+  margin-top: var(--space-5);
+}
+.attach-user-form > label {
+  display: block;
+  color: var(--ntx-body);
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+}
+.attach-user-form__row {
+  display: grid;
+  grid-template-columns: minmax(190px, 1fr) 130px auto;
+  gap: var(--space-3);
+}
+
+@media (max-width: 900px) {
+  .admin-management-grid,
+  .admin-management-grid--wide {
+    grid-template-columns: 1fr;
+  }
+  .inline-form-grid,
+  .attach-user-form__row {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .management-list__item {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* States ------------------------------------------------------------------ */
 .state {
   text-align: center;

@@ -19,6 +19,16 @@ fields. It displays only messages retained by the conversation engine (the most
 recent `MAX_HISTORY`, currently 12 by default); because individual messages do
 not yet carry timestamps, the UI does not invent per-message times.
 
+The client **AI Intake** module now reports real tenant-scoped session outcomes,
+AI response counts, off-topic strikes, opt-outs, and missed-call follow-up. Its
+missed-call archive is reversible and audited. Metrics without a connected data
+source remain explicitly unavailable rather than displaying sample values.
+
+The Control Center now supports day-to-day tenant administration: suspend or
+reactivate a business, assign and enable or disable Twilio numbers, create client
+users, grant or change tenant roles, and remove access. These actions are
+platform-admin-only and recorded in the append-only audit log.
+
 ## What is deliberately NOT deployed
 
 `render.yaml` is unchanged. Render still runs `pip install -r requirements.txt`

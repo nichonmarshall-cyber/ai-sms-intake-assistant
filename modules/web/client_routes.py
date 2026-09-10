@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from flask import Blueprint, g, jsonify, request
-from sqlalchemy import String, cast, func, or_, select
+from sqlalchemy import Integer, String, cast, func, or_, select
 
 from modules import entitlements
 from modules.auth.decorators import require_business_access, require_module
@@ -13,6 +13,7 @@ from modules.serializers import (
     conversation_detail_dto,
     conversation_summary_dto,
     lead_dto,
+    missed_call_dto,
 )
 from modules.tenancy import record_audit_event
 
@@ -266,6 +267,121 @@ def get_conversation(business_id: str, conversation_id: int):
     if row is None:
         return jsonify({"error": "Conversation not found."}), 404
     return jsonify({"conversation": conversation_detail_dto(row)}), 200
+
+
+@client_bp.get("/businesses/<business_id>/ai-intake")
+@require_business_access()
+@require_module("ai_intake")
+def ai_intake(business_id: str):
+    active_states = ("awaiting_profile_selection", "in_progress")
+    include_archived = (request.args.get("include_archived") or "").strip().lower() == "true"
+    active_sessions = g.db.execute(
+        select(func.count())
+        .select_from(ConversationSession)
+        .where(
+            ConversationSession.business_id == business_id,
+            ConversationSession.state.in_(active_states),
+        )
+    ).scalar_one()
+    completed_intakes = g.db.execute(
+        select(func.count())
+        .select_from(Lead)
+        .where(Lead.business_id == business_id, Lead.is_complete.is_(True))
+    ).scalar_one()
+    escalations = g.db.execute(
+        select(func.count())
+        .select_from(Lead)
+        .where(Lead.business_id == business_id, Lead.status == "escalated")
+    ).scalar_one()
+    missed_query = select(MissedCallEvent).where(MissedCallEvent.business_id == business_id)
+    if not include_archived:
+        missed_query = missed_query.where(MissedCallEvent.archived_at.is_(None))
+    missed_calls = g.db.execute(
+        select(func.count()).select_from(missed_query.subquery())
+    ).scalar_one()
+    behavior = g.db.execute(
+        select(
+            func.coalesce(func.avg(ConversationSession.turn_count), 0),
+            func.coalesce(func.sum(ConversationSession.off_topic_strikes), 0),
+            func.coalesce(func.sum(cast(ConversationSession.opted_out, Integer)), 0),
+        ).where(ConversationSession.business_id == business_id)
+    ).one()
+    recent_calls = list(
+        g.db.execute(
+            missed_query
+            .order_by(MissedCallEvent.created_at.desc(), MissedCallEvent.id.desc())
+            .limit(25)
+        ).scalars()
+    )
+    recent_sessions = list(
+        g.db.execute(
+            select(ConversationSession)
+            .where(ConversationSession.business_id == business_id)
+            .order_by(ConversationSession.updated_at.desc(), ConversationSession.id.desc())
+            .limit(5)
+        ).scalars()
+    )
+
+    return jsonify(
+        {
+            "metrics": {
+                "active_sessions": active_sessions,
+                "completed_intakes": completed_intakes,
+                "escalations": escalations,
+                "missed_calls": missed_calls,
+            },
+            "behavior": {
+                "average_turns": round(float(behavior[0] or 0), 1),
+                "off_topic_strikes": int(behavior[1] or 0),
+                "opted_out_sessions": int(behavior[2] or 0),
+            },
+            "recent_missed_calls": [missed_call_dto(event) for event in recent_calls],
+            "recent_sessions": [conversation_summary_dto(row) for row in recent_sessions],
+            "unavailable": [
+                {
+                    "key": "fallback_rate",
+                    "reason": "Fallback outcomes are not stored as structured events yet.",
+                }
+            ],
+        }
+    ), 200
+
+
+@client_bp.patch("/businesses/<business_id>/missed-calls/<int:event_id>")
+@require_business_access(write=True)
+@require_module("ai_intake")
+def update_missed_call(business_id: str, event_id: int):
+    event = g.db.execute(
+        select(MissedCallEvent).where(
+            MissedCallEvent.id == event_id,
+            MissedCallEvent.business_id == business_id,
+        )
+    ).scalar_one_or_none()
+    if event is None:
+        return jsonify({"error": "Missed-call event not found."}), 404
+
+    payload = request.get_json(silent=True) or {}
+    archive = payload.get("archive")
+    if not isinstance(archive, bool):
+        return jsonify(
+            {"error": "Validation failed.", "fields": {"archive": "Must be true or false."}}
+        ), 400
+
+    from datetime import datetime, timezone
+
+    event.archived_at = datetime.now(timezone.utc) if archive else None
+    event.archived_by_user_id = g.current_user.id if archive else None
+    record_audit_event(
+        g.db,
+        action="missed_call.update",
+        target_type="missed_call_event",
+        target_id=str(event.id),
+        business_id=business_id,
+        actor_user_id=g.current_user.id,
+        details={"archived": archive},
+    )
+    g.db.commit()
+    return jsonify({"event": missed_call_dto(event)}), 200
 
 
 @client_bp.get("/businesses/<business_id>/settings")

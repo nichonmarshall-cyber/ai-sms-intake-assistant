@@ -21,6 +21,7 @@ import {
   useFocusOnMount,
 } from "../../components";
 import { Conversations } from "./Conversations";
+import { AIIntake } from "./AIIntake";
 
 interface OverviewPayload {
   metrics: {
@@ -480,6 +481,7 @@ export function ClientDashboardRoutes({
       <Route index element={<Overview businessId={businessId} />} />
       <Route path="leads" element={<Leads businessId={businessId} readOnly={readOnly} />} />
       <Route path="conversations" element={<Conversations businessId={businessId} />} />
+      <Route path="ai_intake" element={<AIIntake businessId={businessId} readOnly={readOnly} />} />
       <Route path="settings" element={<Settings businessId={businessId} readOnly={readOnly} />} />
       {modules
         .filter((module) => !module.implemented)

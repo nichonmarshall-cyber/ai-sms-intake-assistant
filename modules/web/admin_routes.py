@@ -12,6 +12,7 @@ from sqlalchemy import func, select
 from modules import entitlements
 from modules.auth import passwords, sessions
 from modules.auth.decorators import require_platform_admin
+from modules.conversation_store import normalize_phone
 from modules.models import (
     AuditEvent,
     Business,
@@ -263,8 +264,26 @@ def add_phone_number(business_id: str):
 
     payload = request.get_json(silent=True) or {}
     phone = (payload.get("phone") or "").strip()
-    if not phone:
-        return jsonify({"error": "Validation failed.", "fields": {"phone": "Required."}}), 400
+    normalized = normalize_phone(phone)
+    digits = normalized.removeprefix("+")
+    if not normalized or not digits.isdigit() or not 10 <= len(digits) <= 15:
+        return jsonify(
+            {
+                "error": "Validation failed.",
+                "fields": {"phone": "Enter a valid 10–15 digit phone number."},
+            }
+        ), 400
+
+    existing = g.db.execute(
+        select(BusinessPhoneNumber).where(BusinessPhoneNumber.phone == normalized)
+    ).scalar_one_or_none()
+    if existing is not None:
+        return jsonify(
+            {
+                "error": "That phone number is already assigned.",
+                "fields": {"phone": "Already assigned to another tenant."},
+            }
+        ), 409
 
     number = assign_phone_number(
         g.db,
@@ -284,6 +303,46 @@ def add_phone_number(business_id: str):
     )
     g.db.commit()
     return jsonify(phone_number_dto(number)), 201
+
+
+@admin_bp.patch("/businesses/<business_id>/phone-numbers/<int:number_id>")
+@require_platform_admin
+def update_phone_number(business_id: str, number_id: int):
+    number = g.db.execute(
+        select(BusinessPhoneNumber).where(
+            BusinessPhoneNumber.id == number_id,
+            BusinessPhoneNumber.business_id == business_id,
+        )
+    ).scalar_one_or_none()
+    if number is None:
+        return jsonify({"error": "Phone number not found."}), 404
+
+    payload = request.get_json(silent=True) or {}
+    changed = {}
+    if "label" in payload:
+        number.label = (payload.get("label") or "").strip() or None
+        changed["label"] = number.label
+    if "enabled" in payload:
+        if not isinstance(payload["enabled"], bool):
+            return jsonify(
+                {"error": "Validation failed.", "fields": {"enabled": "Must be true or false."}}
+            ), 400
+        number.enabled = payload["enabled"]
+        changed["enabled"] = number.enabled
+    if not changed:
+        return jsonify({"error": "No supported changes were supplied."}), 400
+
+    record_audit_event(
+        g.db,
+        action="business.phone_number.update",
+        target_type="business_phone_number",
+        target_id=str(number.id),
+        business_id=business_id,
+        actor_user_id=g.current_user.id,
+        details=changed,
+    )
+    g.db.commit()
+    return jsonify(phone_number_dto(number)), 200
 
 
 @admin_bp.get("/users")
@@ -385,6 +444,32 @@ def create_membership(business_id: str):
     )
     g.db.commit()
     return jsonify(membership_dto(membership, user=user)), 201
+
+
+@admin_bp.delete("/businesses/<business_id>/memberships/<int:membership_id>")
+@require_platform_admin
+def delete_membership(business_id: str, membership_id: int):
+    membership = g.db.execute(
+        select(BusinessMembership).where(
+            BusinessMembership.id == membership_id,
+            BusinessMembership.business_id == business_id,
+        )
+    ).scalar_one_or_none()
+    if membership is None:
+        return jsonify({"error": "Membership not found."}), 404
+
+    record_audit_event(
+        g.db,
+        action="membership.remove",
+        target_type="business_membership",
+        target_id=str(membership.id),
+        business_id=business_id,
+        actor_user_id=g.current_user.id,
+        details={"user_id": membership.user_id, "role": membership.role},
+    )
+    g.db.delete(membership)
+    g.db.commit()
+    return "", 204
 
 
 @admin_bp.post("/users/<user_id>/revoke-sessions")

@@ -4,7 +4,13 @@ from sqlalchemy import select
 
 from modules.db import session_scope
 from modules.models import AuditEvent
-from tests.conftest import auth_headers, login, make_business, make_platform_user
+from tests.conftest import (
+    auth_headers,
+    login,
+    make_business,
+    make_membership,
+    make_platform_user,
+)
 
 PASSWORD = "correct-horse-battery-staple"
 
@@ -109,6 +115,74 @@ def test_assign_phone_number_is_audited(demo_app):
     assert response.status_code == 201
     assert response.get_json()["phone"] == "+18175550142"
     assert "business.phone_number.assign" in _audit_actions()
+
+
+def test_duplicate_phone_number_is_rejected_cleanly(demo_app):
+    first = make_business(name="First", slug="first-phone")
+    second = make_business(name="Second", slug="second-phone")
+    client, csrf, _ = _admin(demo_app)
+    headers = auth_headers(csrf)
+
+    assert client.post(
+        f"/api/admin/businesses/{first.id}/phone-numbers",
+        json={"phone": "+1 (817) 555-0142"},
+        headers=headers,
+    ).status_code == 201
+    response = client.post(
+        f"/api/admin/businesses/{second.id}/phone-numbers",
+        json={"phone": "+18175550142"},
+        headers=headers,
+    )
+
+    assert response.status_code == 409
+    assert "phone" in response.get_json()["fields"]
+
+
+def test_admin_can_disable_and_relabel_phone_number(demo_app):
+    business = make_business()
+    client, csrf, _ = _admin(demo_app)
+    headers = auth_headers(csrf)
+    number = client.post(
+        f"/api/admin/businesses/{business.id}/phone-numbers",
+        json={"phone": "+18175550143", "label": "Main"},
+        headers=headers,
+    ).get_json()
+
+    response = client.patch(
+        f"/api/admin/businesses/{business.id}/phone-numbers/{number['id']}",
+        json={"enabled": False, "label": "Overflow"},
+        headers=headers,
+    )
+
+    assert response.status_code == 200
+    assert response.get_json()["enabled"] is False
+    assert response.get_json()["label"] == "Overflow"
+    assert "business.phone_number.update" in _audit_actions()
+
+
+def test_admin_can_update_and_remove_membership(demo_app):
+    business = make_business()
+    user = make_platform_user(email="member@client.test", password=PASSWORD)
+    membership = make_membership(business.id, user.id, role="viewer")
+    client, csrf, _ = _admin(demo_app)
+    headers = auth_headers(csrf)
+
+    updated = client.post(
+        f"/api/admin/businesses/{business.id}/memberships",
+        json={"user_id": user.id, "role": "manager"},
+        headers=headers,
+    )
+    assert updated.status_code == 201
+    assert updated.get_json()["role"] == "manager"
+
+    removed = client.delete(
+        f"/api/admin/businesses/{business.id}/memberships/{membership.id}",
+        headers=headers,
+    )
+    assert removed.status_code == 204
+    actions = _audit_actions()
+    assert "membership.upsert" in actions
+    assert "membership.remove" in actions
 
 
 def test_created_user_response_omits_credentials(demo_app):
