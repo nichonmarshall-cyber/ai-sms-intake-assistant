@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Route, Routes, useParams } from "react-router-dom";
+import { Link, Route, Routes, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import type {
   Business,
+  ConversationSummary,
   Lead,
   LeadWorkflowStatus,
   NavModule,
@@ -30,6 +31,10 @@ interface OverviewPayload {
     open_conversations: number;
     missed_calls_handled: number;
   };
+  recent_leads: Lead[];
+  recent_conversations: ConversationSummary[];
+  lead_sources: { source: string; count: number }[];
+  lead_activity: { date: string; count: number }[];
   unavailable: UnavailableMetric[];
 }
 
@@ -349,6 +354,8 @@ function Overview({ businessId }: { businessId: string }) {
     };
   }, [businessId]);
 
+  const maxActivity = Math.max(1, ...(data?.lead_activity.map((item) => item.count) ?? [1]));
+
   return (
     <>
       <h1 className="page-title" tabIndex={-1} ref={heading}>
@@ -367,15 +374,77 @@ function Overview({ businessId }: { businessId: string }) {
             <Stat label="Missed calls handled" value={data.metrics.missed_calls_handled} icon="✆" />
           </div>
 
-          <Card title="Coming with the next release">
-            <ul style={{ color: "var(--ntx-muted)", paddingLeft: 18, margin: 0 }}>
-              {data.unavailable.map((item) => (
-                <li key={item.key} style={{ marginBottom: 6 }}>
-                  <strong style={{ color: "var(--ntx-body)" }}>{item.key}</strong> — {item.reason}
-                </li>
-              ))}
-            </ul>
-          </Card>
+          <div className="overview-live-grid">
+            <Card title="Recent leads" action={<Link className="table__link" to="leads">View all</Link>}>
+              {data.recent_leads.length === 0 ? (
+                <EmptyState title="No leads yet" body="Captured leads will appear here." />
+              ) : (
+                <div className="overview-list">
+                  {data.recent_leads.map((lead) => (
+                    <Link className="overview-list__item" to="leads" key={lead.id}>
+                      <span>
+                        <strong>{lead.customer_name || lead.phone}</strong>
+                        <small>{lead.service_request || lead.business_summary || "No service summary"}</small>
+                      </span>
+                      <Badge tone={leadTone(lead.workflow_status)}>{LEAD_STATUS_LABELS[lead.workflow_status]}</Badge>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </Card>
+
+            <Card title="Recent conversations" action={<Link className="table__link" to="conversations">View all</Link>}>
+              {data.recent_conversations.length === 0 ? (
+                <EmptyState title="No conversations yet" body="SMS intake conversations will appear here." />
+              ) : (
+                <div className="overview-list">
+                  {data.recent_conversations.map((conversation) => (
+                    <Link className="overview-list__item" to="conversations" key={conversation.id}>
+                      <span>
+                        <strong>{conversation.customer_name || conversation.phone}</strong>
+                        <small>{conversation.last_message || "No stored message"}</small>
+                      </span>
+                      <Badge tone={conversation.state === "completed" ? "ok" : "demo"}>
+                        {conversation.state === "completed" ? "Completed" : "Active"}
+                      </Badge>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </div>
+
+          <div className="overview-live-grid overview-live-grid--activity">
+            <Card title="Lead activity · last 7 days">
+              <div className="activity-chart" role="img" aria-label="New leads per day for the last seven days">
+                {data.lead_activity.map((item) => (
+                  <div className="activity-chart__day" key={item.date}>
+                    <span className="activity-chart__count">{item.count}</span>
+                    <div className="activity-chart__track">
+                      <span style={{ height: `${Math.max(4, (item.count / maxActivity) * 100)}%` }} />
+                    </div>
+                    <small>{new Date(`${item.date}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" })}</small>
+                  </div>
+                ))}
+              </div>
+            </Card>
+
+            <Card title="Lead sources">
+              {data.lead_sources.length === 0 ? (
+                <EmptyState title="No source data" body="Lead attribution will appear as intake records are captured." />
+              ) : (
+                <div className="source-list">
+                  {data.lead_sources.map((item) => (
+                    <div key={item.source}><span>{item.source.replace(/_/g, " ")}</span><strong>{item.count}</strong></div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          </div>
+
+          <p className="data-boundary-note">
+            Calendar availability and provider delivery rates remain unavailable until their separate integrations are connected.
+          </p>
         </>
       )}
     </>

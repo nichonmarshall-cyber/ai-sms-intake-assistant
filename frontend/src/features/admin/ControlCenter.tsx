@@ -21,6 +21,7 @@ import {
   Stat,
   useFocusOnMount,
 } from "../../components";
+import { DeliveryDiagnostics, PlatformConversations, WebhookDiagnostics } from "./AdminDiagnostics";
 
 interface OverviewPayload {
   active_businesses: number;
@@ -97,7 +98,7 @@ function PlatformOverview() {
   );
 }
 
-function BusinessList() {
+function BusinessList({ readOnly }: { readOnly: boolean }) {
   const heading = useFocusOnMount<HTMLHeadingElement>();
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -196,7 +197,7 @@ function BusinessList() {
         )}
       </Card>
 
-      <div style={{ marginTop: 24 }}>
+      {!readOnly && <div style={{ marginTop: 24 }}>
         <Card title="Create a business">
           <form onSubmit={createBusiness} noValidate>
             <Field label="Business name" id="new-name" error={fieldErrors.name}>
@@ -230,7 +231,7 @@ function BusinessList() {
             </button>
           </form>
         </Card>
-      </div>
+      </div>}
     </>
   );
 }
@@ -243,7 +244,7 @@ interface BusinessDetailPayload {
   counts: { leads: number; missed_calls: number };
 }
 
-function BusinessDetail() {
+function BusinessDetail({ readOnly }: { readOnly: boolean }) {
   const { businessId = "" } = useParams();
   const heading = useFocusOnMount<HTMLHeadingElement>();
   const { data, error, loading, reload } = useResource<BusinessDetailPayload>(
@@ -385,7 +386,7 @@ function BusinessDetail() {
             <button
               type="button"
               className={data.business.status === "active" ? "btn" : "btn btn--primary"}
-              disabled={saving === "business-status"}
+              disabled={readOnly || saving === "business-status"}
               onClick={changeStatus}
             >
               {data.business.status === "active" ? "Suspend tenant" : "Reactivate tenant"}
@@ -422,7 +423,7 @@ function BusinessDetail() {
             <button
               type="button"
               className={module.enabled ? "btn btn--primary" : "btn"}
-              disabled={saving === `module-${module.key}`}
+              disabled={readOnly || saving === `module-${module.key}`}
               aria-pressed={module.enabled}
               onClick={() => toggleModule(module.key, !module.enabled)}
             >
@@ -434,7 +435,7 @@ function BusinessDetail() {
 
       <div style={{ marginTop: 24 }}>
         <Card title="Phone numbers">
-          <form className="inline-form-grid" onSubmit={addPhone} noValidate>
+          {!readOnly && <form className="inline-form-grid" onSubmit={addPhone} noValidate>
             <Field label="Twilio number" id="tenant-phone" error={phoneErrors.phone}>
               <input
                 id="tenant-phone"
@@ -456,7 +457,7 @@ function BusinessDetail() {
             <button className="btn btn--primary inline-form-grid__button" disabled={saving === "add-phone"}>
               Assign number
             </button>
-          </form>
+          </form>}
           {data.phone_numbers.length === 0 ? (
             <EmptyState
               title="No number assigned"
@@ -487,7 +488,7 @@ function BusinessDetail() {
                         <button
                           type="button"
                           className="btn"
-                          disabled={saving === `phone-${number.id}`}
+                          disabled={readOnly || saving === `phone-${number.id}`}
                           onClick={() => runAction(`phone-${number.id}`, async () => {
                             await api.patch(
                               `/api/admin/businesses/${businessId}/phone-numbers/${number.id}`,
@@ -523,7 +524,7 @@ function BusinessDetail() {
                     className="input management-list__role"
                     aria-label={`Role for ${membership.user?.email || membership.user_id}`}
                     value={membership.role}
-                    disabled={saving === `membership-${membership.user_id}`}
+                    disabled={readOnly || saving === `membership-${membership.user_id}`}
                     onChange={(event) => saveMembership(membership.user_id, event.target.value)}
                   >
                     <option value="owner">Owner</option>
@@ -534,7 +535,7 @@ function BusinessDetail() {
                   <button
                     type="button"
                     className="btn"
-                    disabled={saving === `remove-${membership.id}`}
+                    disabled={readOnly || saving === `remove-${membership.id}`}
                     onClick={() => {
                       if (!window.confirm("Remove this user's access to the tenant?")) return;
                       void runAction(`remove-${membership.id}`, async () => {
@@ -549,7 +550,7 @@ function BusinessDetail() {
             </div>
           )}
 
-          <form className="attach-user-form" onSubmit={(event) => {
+          {!readOnly && <form className="attach-user-form" onSubmit={(event) => {
             event.preventDefault();
             if (selectedUserId) void saveMembership(selectedUserId, selectedRole);
           }}>
@@ -576,10 +577,10 @@ function BusinessDetail() {
                 Grant access
               </button>
             </div>
-          </form>
+          </form>}
         </Card>
 
-        <Card title="Create client user">
+        {!readOnly && <Card title="Create client user">
           <form onSubmit={createClientUser} noValidate>
             <Field label="Display name" id="client-user-name">
               <input id="client-user-name" className="input" value={newUserName} onChange={(event) => setNewUserName(event.target.value)} />
@@ -600,7 +601,7 @@ function BusinessDetail() {
             </Field>
             <button className="btn btn--primary" disabled={saving === "create-user"}>Create and grant access</button>
           </form>
-        </Card>
+        </Card>}
       </div>
     </>
   );
@@ -655,12 +656,15 @@ function AuditLog() {
   );
 }
 
-export function ControlCenterRoutes() {
+export function ControlCenterRoutes({ readOnly }: { readOnly: boolean }) {
   return (
     <Routes>
       <Route index element={<PlatformOverview />} />
-      <Route path="businesses" element={<BusinessList />} />
-      <Route path="businesses/:businessId" element={<BusinessDetail />} />
+      <Route path="businesses" element={<BusinessList readOnly={readOnly} />} />
+      <Route path="businesses/:businessId" element={<BusinessDetail readOnly={readOnly} />} />
+      <Route path="conversations" element={<PlatformConversations />} />
+      <Route path="delivery" element={<DeliveryDiagnostics />} />
+      <Route path="webhooks" element={<WebhookDiagnostics />} />
       <Route path="audit" element={<AuditLog />} />
       <Route path="*" element={<EmptyState title="Page not found" body="That Control Center page does not exist." />} />
     </Routes>

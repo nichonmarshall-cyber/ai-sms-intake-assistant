@@ -29,6 +29,17 @@ reactivate a business, assign and enable or disable Twilio numbers, create clien
 users, grant or change tenant roles, and remove access. These actions are
 platform-admin-only and recorded in the append-only audit log.
 
+The dashboard-completion batch adds live cross-tenant Conversations, Delivery,
+and Webhooks diagnostics to the Control Center. Platform staff receive read-only
+operations access while platform admins retain every mutation. The client
+Overview now shows recent leads, recent conversations, seven-day lead activity,
+and source attribution from stored tenant data.
+
+This batch deliberately does not change missed-call processing or connect a
+calendar. Delivery status reflects the persisted Twilio queue result only; it
+does not claim carrier delivery until provider receipts are stored. Calendar
+metrics remain unavailable until the separate calendar integration batch.
+
 ## What is deliberately NOT deployed
 
 `render.yaml` is unchanged. Render still runs `pip install -r requirements.txt`

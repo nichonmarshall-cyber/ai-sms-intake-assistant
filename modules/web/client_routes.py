@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from collections import Counter
+from datetime import datetime, timedelta, timezone
+
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import Integer, String, cast, func, or_, select
 
@@ -77,6 +80,35 @@ def overview(business_id: str):
             ConversationSession.state.in_({"awaiting_profile_selection", "in_progress"}),
         )
     ).scalar_one()
+    recent_leads = list(
+        g.db.execute(
+            select(Lead)
+            .where(Lead.business_id == business_id, Lead.archived_at.is_(None))
+            .order_by(Lead.created_at.desc(), Lead.id.desc())
+            .limit(6)
+        ).scalars()
+    )
+    recent_sessions = list(
+        g.db.execute(
+            select(ConversationSession)
+            .where(ConversationSession.business_id == business_id)
+            .order_by(ConversationSession.updated_at.desc(), ConversationSession.id.desc())
+            .limit(4)
+        ).scalars()
+    )
+    all_leads = list(
+        g.db.execute(select(Lead).where(Lead.business_id == business_id)).scalars()
+    )
+    source_counts = Counter(
+        str((lead.fields or {}).get("source") or "Direct SMS").strip() or "Direct SMS"
+        for lead in all_leads
+    )
+    today = datetime.now(timezone.utc).date()
+    daily_counts = Counter(
+        lead.created_at.date()
+        for lead in all_leads
+        if lead.created_at and lead.created_at.date() >= today - timedelta(days=6)
+    )
 
     return jsonify(
         {
@@ -86,6 +118,19 @@ def overview(business_id: str):
                 "open_conversations": open_conversations,
                 "missed_calls_handled": missed_calls,
             },
+            "recent_leads": [lead_dto(lead) for lead in recent_leads],
+            "recent_conversations": [conversation_summary_dto(row) for row in recent_sessions],
+            "lead_sources": [
+                {"source": source, "count": count}
+                for source, count in sorted(source_counts.items(), key=lambda item: (-item[1], item[0]))
+            ],
+            "lead_activity": [
+                {
+                    "date": (today - timedelta(days=offset)).isoformat(),
+                    "count": daily_counts[today - timedelta(days=offset)],
+                }
+                for offset in range(6, -1, -1)
+            ],
             "unavailable": [
                 {
                     "key": "response_rate",

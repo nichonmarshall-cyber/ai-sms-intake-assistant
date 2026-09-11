@@ -17,13 +17,21 @@ def test_admin_reaches_control_center_routes(demo_app):
     assert client.get("/api/admin/businesses").status_code == 200
 
 
-def test_platform_staff_cannot_reach_admin_management_routes(demo_app):
+def test_platform_staff_gets_read_only_control_center_access(demo_app):
     make_platform_user(email="staff@ntx.test", password=PASSWORD, platform_role="staff")
     client, csrf, _ = login(demo_app, "staff@ntx.test", PASSWORD)
 
-    assert client.get("/api/admin/businesses").status_code == 403
-    assert client.get("/api/admin/users").status_code == 403
-    assert client.get("/api/admin/audit-events").status_code == 403
+    assert client.get("/api/admin/businesses").status_code == 200
+    assert client.get("/api/admin/users").status_code == 200
+    assert client.get("/api/admin/audit-events").status_code == 200
+    assert client.get("/api/admin/conversations").status_code == 200
+    assert client.get("/api/admin/delivery").status_code == 200
+    assert client.get("/api/admin/webhooks").status_code == 200
+    assert client.post(
+        "/api/admin/businesses",
+        json={"name": "Blocked", "slug": "blocked"},
+        headers=auth_headers(csrf),
+    ).status_code == 403
 
 
 def test_platform_staff_gets_read_only_cross_tenant_access(demo_app):
@@ -52,6 +60,9 @@ def test_client_user_cannot_reach_any_admin_route(demo_app):
 
     assert client.get("/api/admin/businesses").status_code == 403
     assert client.get("/api/admin/overview").status_code == 403
+    assert client.get("/api/admin/conversations").status_code == 403
+    assert client.get("/api/admin/delivery").status_code == 403
+    assert client.get("/api/admin/webhooks").status_code == 403
     assert client.post(
         "/api/admin/businesses",
         json={"name": "Sneaky", "slug": "sneaky"},

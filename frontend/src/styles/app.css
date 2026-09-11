@@ -761,6 +761,129 @@
   }
 }
 
+/* Live overview ---------------------------------------------------------- */
+.overview-live-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+}
+.overview-live-grid--activity {
+  grid-template-columns: minmax(420px, 1.4fr) minmax(260px, 0.6fr);
+}
+.overview-list {
+  display: flex;
+  flex-direction: column;
+}
+.overview-list__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--ntx-border);
+}
+.overview-list__item:last-child {
+  border-bottom: 0;
+}
+.overview-list__item > span:first-child {
+  min-width: 0;
+}
+.overview-list__item strong,
+.overview-list__item small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.overview-list__item strong {
+  color: var(--ntx-white);
+  font-size: 12px;
+}
+.overview-list__item small {
+  color: var(--ntx-muted);
+  font-size: 11px;
+  margin-top: 4px;
+}
+.overview-list__item:hover strong {
+  color: var(--ntx-orange-light);
+}
+.activity-chart {
+  display: grid;
+  grid-template-columns: repeat(7, minmax(34px, 1fr));
+  align-items: end;
+  gap: var(--space-3);
+  min-height: 190px;
+}
+.activity-chart__day {
+  display: grid;
+  grid-template-rows: 18px 130px 18px;
+  gap: var(--space-2);
+  align-items: end;
+  text-align: center;
+}
+.activity-chart__count,
+.activity-chart__day small {
+  color: var(--ntx-muted);
+  font-size: 10px;
+}
+.activity-chart__track {
+  position: relative;
+  height: 130px;
+  border-radius: var(--radius-sm);
+  background: var(--ntx-black);
+  overflow: hidden;
+}
+.activity-chart__track > span {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  min-height: 4px;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: linear-gradient(180deg, var(--ntx-orange-light), var(--ntx-orange));
+}
+.source-list > div {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-4);
+  padding: var(--space-3) 0;
+  border-bottom: 1px solid var(--ntx-border);
+  text-transform: capitalize;
+}
+.source-list > div:last-child {
+  border-bottom: 0;
+}
+.source-list span {
+  color: var(--ntx-body);
+}
+.source-list strong {
+  color: var(--ntx-white);
+}
+.data-boundary-note {
+  color: var(--ntx-muted);
+  font-size: 11px;
+  line-height: 1.6;
+  margin: 0;
+}
+.data-boundary-note--inside {
+  margin-bottom: var(--space-4);
+}
+
+@media (max-width: 900px) {
+  .overview-live-grid,
+  .overview-live-grid--activity {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 600px) {
+  .activity-chart {
+    gap: 5px;
+  }
+}
+
 /* Tenant administration -------------------------------------------------- */
 .admin-management-grid {
   display: grid;

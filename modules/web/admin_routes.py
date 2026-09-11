@@ -7,25 +7,29 @@ import re
 from uuid import uuid4
 
 from flask import Blueprint, g, jsonify, request
-from sqlalchemy import func, select
+from sqlalchemy import String, cast, func, or_, select
 
 from modules import entitlements
 from modules.auth import passwords, sessions
-from modules.auth.decorators import require_platform_admin
+from modules.auth.decorators import require_platform_admin, require_platform_operator
 from modules.conversation_store import normalize_phone
 from modules.models import (
     AuditEvent,
     Business,
     BusinessMembership,
     BusinessPhoneNumber,
+    ConversationSession,
     Lead,
     MissedCallEvent,
     PlatformUser,
+    ProcessedMessage,
 )
 from modules.serializers import (
     audit_event_dto,
     business_dto,
+    conversation_summary_dto,
     membership_dto,
+    missed_call_dto,
     phone_number_dto,
     user_dto,
 )
@@ -54,7 +58,7 @@ def _page_args() -> tuple[int, int]:
 
 
 @admin_bp.get("/businesses")
-@require_platform_admin
+@require_platform_operator
 def list_businesses():
     page, size = _page_args()
     search = (request.args.get("q") or "").strip().lower()
@@ -131,7 +135,7 @@ def create_business_route():
 
 
 @admin_bp.get("/businesses/<business_id>")
-@require_platform_admin
+@require_platform_operator
 def get_business(business_id: str):
     business = g.db.get(Business, business_id)
     if business is None:
@@ -346,7 +350,7 @@ def update_phone_number(business_id: str, number_id: int):
 
 
 @admin_bp.get("/users")
-@require_platform_admin
+@require_platform_operator
 def list_users():
     rows = list(g.db.execute(select(PlatformUser).order_by(PlatformUser.email)).scalars())
     return jsonify({"items": [user_dto(u) for u in rows]}), 200
@@ -493,7 +497,7 @@ def revoke_user_sessions(user_id: str):
 
 
 @admin_bp.get("/audit-events")
-@require_platform_admin
+@require_platform_operator
 def list_audit_events():
     page, size = _page_args()
     business_id = (request.args.get("business_id") or "").strip()
@@ -521,7 +525,7 @@ def list_audit_events():
 
 
 @admin_bp.get("/overview")
-@require_platform_admin
+@require_platform_operator
 def platform_overview():
     """Only metrics backed by real tables. No fabricated numbers."""
     total_businesses = g.db.execute(
@@ -542,5 +546,143 @@ def platform_overview():
                 {"key": "sms_usage", "reason": "Twilio usage API not connected."},
                 {"key": "active_alerts", "reason": "Alerts arrive in Phase 3."},
             ],
+        }
+    ), 200
+
+
+@admin_bp.get("/conversations")
+@require_platform_operator
+def platform_conversations():
+    page, size = _page_args()
+    search = (request.args.get("q") or "").strip().lower()
+    state = (request.args.get("state") or "").strip().lower()
+    valid_states = {"awaiting_profile_selection", "in_progress", "completed", "terminated"}
+    if state and state not in valid_states:
+        return jsonify({"error": "Invalid conversation state."}), 400
+
+    query = (
+        select(ConversationSession, Business)
+        .join(Business, ConversationSession.business_id == Business.id)
+    )
+    if state:
+        query = query.where(ConversationSession.state == state)
+    if search:
+        pattern = f"%{search}%"
+        query = query.where(
+            or_(
+                func.lower(ConversationSession.phone).like(pattern),
+                func.lower(Business.name).like(pattern),
+                func.lower(cast(ConversationSession.fields, String)).like(pattern),
+            )
+        )
+
+    total = g.db.execute(select(func.count()).select_from(query.subquery())).scalar_one()
+    rows = g.db.execute(
+        query.order_by(ConversationSession.updated_at.desc(), ConversationSession.id.desc())
+        .offset((page - 1) * size)
+        .limit(size)
+    ).all()
+    items = []
+    for session, business in rows:
+        item = conversation_summary_dto(session)
+        item["business"] = {"id": business.id, "name": business.name, "slug": business.slug}
+        items.append(item)
+    return jsonify(
+        {
+            "items": items,
+            "total": total,
+            "page": page,
+            "page_size": size,
+            "states": sorted(valid_states),
+        }
+    ), 200
+
+
+@admin_bp.get("/delivery")
+@require_platform_operator
+def platform_delivery():
+    rows = g.db.execute(
+        select(MissedCallEvent, Business)
+        .join(Business, MissedCallEvent.business_id == Business.id)
+        .order_by(MissedCallEvent.created_at.desc(), MissedCallEvent.id.desc())
+        .limit(100)
+    ).all()
+    total = g.db.execute(select(func.count()).select_from(MissedCallEvent)).scalar_one()
+    queued = g.db.execute(
+        select(func.count())
+        .select_from(MissedCallEvent)
+        .where(MissedCallEvent.message_sid.is_not(None))
+    ).scalar_one()
+    items = []
+    for event, business in rows:
+        item = missed_call_dto(event)
+        item["business"] = {"id": business.id, "name": business.name}
+        item["delivery_status"] = "queued" if event.message_sid else "not_sent"
+        items.append(item)
+    return jsonify(
+        {
+            "metrics": {"attempted": total, "queued": queued, "not_sent": total - queued},
+            "items": items,
+            "notice": "Provider delivery receipts are not stored yet; queued does not mean delivered.",
+        }
+    ), 200
+
+
+@admin_bp.get("/webhooks")
+@require_platform_operator
+def platform_webhooks():
+    businesses = {
+        business.id: business.name
+        for business in g.db.execute(select(Business)).scalars()
+    }
+    sms_rows = list(
+        g.db.execute(
+            select(ProcessedMessage)
+            .order_by(ProcessedMessage.created_at.desc(), ProcessedMessage.id.desc())
+            .limit(100)
+        ).scalars()
+    )
+    voice_rows = list(
+        g.db.execute(
+            select(MissedCallEvent)
+            .order_by(MissedCallEvent.created_at.desc(), MissedCallEvent.id.desc())
+            .limit(100)
+        ).scalars()
+    )
+    items = [
+        {
+            "id": f"sms-{row.id}",
+            "kind": "Inbound SMS",
+            "business_id": row.business_id,
+            "business_name": businesses.get(row.business_id, "Legacy or unassigned"),
+            "external_id": row.message_sid,
+            "phone": row.phone,
+            "outcome": "processed",
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in sms_rows
+    ] + [
+        {
+            "id": f"voice-{row.id}",
+            "kind": "Voice webhook",
+            "business_id": row.business_id,
+            "business_name": businesses.get(row.business_id, "Legacy or unassigned"),
+            "external_id": row.call_sid,
+            "phone": row.caller_phone,
+            "outcome": row.decision,
+            "created_at": row.created_at.isoformat() if row.created_at else None,
+        }
+        for row in voice_rows
+    ]
+    items.sort(key=lambda item: (item["created_at"] or "", item["id"]), reverse=True)
+    return jsonify(
+        {
+            "metrics": {
+                "inbound_sms": len(sms_rows),
+                "voice_events": len(voice_rows),
+                "total_recent": min(len(items), 100),
+            },
+            "items": items[:100],
+            "notice": "This is the persisted idempotency ledger, not raw request payloads.",
         }
     ), 200

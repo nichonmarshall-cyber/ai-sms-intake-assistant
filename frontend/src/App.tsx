@@ -30,22 +30,17 @@ function ControlCenter() {
       items: [
         { to: "/admin", label: "Control Center", icon: "◉" },
         { to: "/admin/businesses", label: "Businesses", icon: "▦" },
+        { to: "/admin/conversations", label: "Conversations", icon: "◍" },
+        { to: "/admin/delivery", label: "Delivery", icon: "◎" },
+        { to: "/admin/webhooks", label: "Webhooks", icon: "◌" },
         { to: "/admin/audit", label: "Audit log", icon: "❑" },
-      ],
-    },
-    {
-      heading: "Later phases",
-      items: [
-        { to: "#", label: "Conversations", icon: "◍", locked: true, lockReason: "Phase 2" },
-        { to: "#", label: "Delivery", icon: "◎", locked: true, lockReason: "Phase 3" },
-        { to: "#", label: "Webhooks", icon: "◌", locked: true, lockReason: "Phase 3" },
       ],
     },
   ];
 
   return (
     <AppShell sections={sections} contextLabel="NTX Automation Co. — internal">
-      <ControlCenterRoutes />
+      <ControlCenterRoutes readOnly={me.is_read_only} />
     </AppShell>
   );
 }

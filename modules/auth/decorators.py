@@ -118,6 +118,23 @@ def require_platform_admin(view):
     return wrapper
 
 
+def require_platform_operator(view):
+    """Allows platform admins and read-only platform operations staff."""
+
+    @wraps(view)
+    @require_auth
+    def wrapper(*args, **kwargs):
+        if not (is_platform_admin(g.current_user) or is_platform_staff(g.current_user)):
+            logger.warning(
+                "[authz] Non-platform user %s attempted %s", g.current_user.id, request.path
+            )
+            return _json_error("Platform access required.", 403)
+        g.platform_read_only = is_platform_staff(g.current_user)
+        return view(*args, **kwargs)
+
+    return wrapper
+
+
 def require_business_access(*, write: bool = False):
     """Resolves and authorizes ``business_id`` from the route's path arguments."""
 
