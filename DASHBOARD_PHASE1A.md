@@ -55,8 +55,9 @@ smoke test from an allowlisted number.
 
 ## What is deliberately NOT deployed
 
-`render.yaml` is unchanged. Render still runs `pip install -r requirements.txt`
-and has no Node toolchain, so it cannot build the React bundle. `static/dist` is
+Render deployment behavior is unchanged apart from the safe retry-count default.
+It still runs `pip install -r requirements.txt` and has no Node toolchain, so it
+cannot build the React bundle. `static/dist` is
 gitignored and not committed. On Render the dashboard routes therefore return a
 controlled **503**, while `/sms`, `/voice/missed-call`, `/health`, and `/reset`
 continue to work exactly as before. Wiring the build into Render is the first
