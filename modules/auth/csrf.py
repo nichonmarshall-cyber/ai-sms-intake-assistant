@@ -16,7 +16,9 @@ SAFE_METHODS = {"GET", "HEAD", "OPTIONS"}
 
 # Paths that must never require a CSRF header. These are Twilio-facing or
 # token-authenticated and are protected by their own mechanisms.
-EXEMPT_PATHS = frozenset({"/sms", "/voice/missed-call", "/health", "/reset"})
+EXEMPT_PATHS = frozenset(
+    {"/sms", "/voice/missed-call", "/voice/missed-call/status", "/health", "/reset"}
+)
 
 
 def is_exempt(path: str, method: str) -> bool:

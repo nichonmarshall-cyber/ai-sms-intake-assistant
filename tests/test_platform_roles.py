@@ -32,6 +32,10 @@ def test_platform_staff_gets_read_only_control_center_access(demo_app):
         json={"name": "Blocked", "slug": "blocked"},
         headers=auth_headers(csrf),
     ).status_code == 403
+    assert client.post(
+        "/api/admin/businesses/not-a-tenant/missed-calls/1/retry",
+        headers=auth_headers(csrf),
+    ).status_code == 403
 
 
 def test_platform_staff_gets_read_only_cross_tenant_access(demo_app):

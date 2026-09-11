@@ -870,6 +870,12 @@
 .data-boundary-note--inside {
   margin-bottom: var(--space-4);
 }
+.delivery-error-code {
+  display: block;
+  color: var(--ntx-red);
+  font-size: 10px;
+  margin-top: 4px;
+}
 
 @media (max-width: 900px) {
   .overview-live-grid,

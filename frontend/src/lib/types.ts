@@ -70,6 +70,12 @@ export interface MissedCallEvent {
   source: string;
   decision: string;
   message_sid: string | null;
+  call_status: string | null;
+  call_duration_seconds: number | null;
+  delivery_status: string | null;
+  send_attempts: number;
+  last_attempt_at: string | null;
+  error_code: string | null;
   archived_at: string | null;
   created_at: string | null;
 }

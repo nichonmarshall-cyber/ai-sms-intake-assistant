@@ -143,6 +143,12 @@ class MissedCallEvent(Base):
     source: Mapped[str] = mapped_column(String(32), nullable=False, default="missed_call")
     decision: Mapped[str] = mapped_column(String(64), nullable=False)
     message_sid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    call_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    call_duration_seconds: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    delivery_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    send_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    error_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     archived_by_user_id: Mapped[str | None] = mapped_column(

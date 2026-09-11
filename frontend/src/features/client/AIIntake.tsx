@@ -188,7 +188,7 @@ export function AIIntake({ businessId, readOnly }: { businessId: string; readOnl
                           <td data-label="Caller"><a className="table__link" href={`tel:${event.caller_phone}`}>{event.caller_phone}</a></td>
                           <td data-label="Received">{formatDate(event.created_at)}</td>
                           <td data-label="Result"><Badge tone={event.decision === "message_sent" ? "ok" : "warn"}>{label(event.decision)}</Badge></td>
-                          <td data-label="SMS">{event.message_sid ? "Queued" : "Not sent"}</td>
+                          <td data-label="SMS">{label(event.delivery_status || (event.message_sid ? "queued" : "not_sent"))}</td>
                           <td data-label="Retention">
                             <button
                               className="btn"

@@ -14,11 +14,10 @@ interface ConversationsPayload extends Paged<PlatformConversation> {
 
 interface DeliveryItem extends MissedCallEvent {
   business: { id: string; name: string };
-  delivery_status: "queued" | "not_sent";
 }
 
 interface DeliveryPayload {
-  metrics: { attempted: number; queued: number; not_sent: number };
+  metrics: { events: number; submitted: number; delivered: number; failed: number; not_sent: number };
   items: DeliveryItem[];
   notice: string;
 }
@@ -113,20 +112,36 @@ export function PlatformConversations() {
   );
 }
 
-export function DeliveryDiagnostics() {
+export function DeliveryDiagnostics({ readOnly }: { readOnly: boolean }) {
   const heading = useFocusOnMount<HTMLHeadingElement>();
   const { data, error, loading, load } = useLiveData<DeliveryPayload>("/api/admin/delivery");
+  const [retrying, setRetrying] = useState<number | null>(null);
+  const [retryError, setRetryError] = useState<string | null>(null);
+
+  const retry = async (item: DeliveryItem) => {
+    if (!window.confirm(`Retry the failed SMS to ${item.caller_phone}?`)) return;
+    setRetrying(item.id);
+    setRetryError(null);
+    try {
+      await api.post(`/api/admin/businesses/${item.business.id}/missed-calls/${item.id}/retry`);
+      await load();
+    } catch (err) {
+      setRetryError(err instanceof Error ? err.message : "Could not retry the failed message.");
+    } finally {
+      setRetrying(null);
+    }
+  };
   return (
     <>
       <h1 className="page-title" tabIndex={-1} ref={heading}>Delivery</h1>
       <p className="page-subtitle">Persisted missed-call follow-up attempts across all tenants.</p>
-      {loading && <Loading rows={5} />}{error && <ErrorState body={error} />}
+      {loading && <Loading rows={5} />}{error && <ErrorState body={error} />}{retryError && <ErrorState body={retryError} />}
       {data && <>
-        <div className="stat-grid"><Stat label="Attempted" value={data.metrics.attempted} icon="➤" /><Stat label="Queued by Twilio" value={data.metrics.queued} icon="✓" /><Stat label="Not sent" value={data.metrics.not_sent} icon="!" /></div>
+        <div className="stat-grid"><Stat label="Call events" value={data.metrics.events} icon="✆" /><Stat label="Submitted to Twilio" value={data.metrics.submitted} icon="➤" /><Stat label="Delivered" value={data.metrics.delivered} icon="✓" /><Stat label="Failed delivery" value={data.metrics.failed} icon="!" /></div>
         <Card title="Delivery activity" action={<button className="btn" type="button" onClick={() => void load()}>Refresh</button>}>
           <p className="data-boundary-note data-boundary-note--inside">{data.notice}</p>
-          {data.items.length === 0 ? <EmptyState title="No delivery attempts" body="Missed-call follow-up activity will appear here." /> : <div className="table-scroll"><table className="table table--stack"><thead><tr><th>Business</th><th>Caller</th><th>Decision</th><th>Queue status</th><th>Message SID</th><th>When</th></tr></thead><tbody>
-            {data.items.map((item) => <tr key={item.id}><td data-label="Business">{item.business.name}</td><td data-label="Caller">{item.caller_phone}</td><td data-label="Decision">{humanize(item.decision)}</td><td data-label="Queue status"><Badge tone={item.delivery_status === "queued" ? "ok" : "warn"}>{humanize(item.delivery_status)}</Badge></td><td data-label="Message SID"><code>{item.message_sid || "—"}</code></td><td data-label="When">{formatDate(item.created_at)}</td></tr>)}
+          {data.items.length === 0 ? <EmptyState title="No delivery attempts" body="Missed-call follow-up activity will appear here." /> : <div className="table-scroll"><table className="table table--stack"><thead><tr><th>Business</th><th>Caller</th><th>Decision</th><th>Delivery status</th><th>Attempts</th><th>When</th><th>Action</th></tr></thead><tbody>
+            {data.items.map((item) => <tr key={item.id}><td data-label="Business">{item.business.name}</td><td data-label="Caller">{item.caller_phone}</td><td data-label="Decision">{humanize(item.decision)}</td><td data-label="Delivery status"><Badge tone={item.delivery_status === "delivered" ? "ok" : item.delivery_status === "failed" || item.delivery_status === "undelivered" ? "warn" : "demo"}>{humanize(item.delivery_status || "not_sent")}</Badge>{item.error_code && <small className="delivery-error-code">Error {item.error_code}</small>}</td><td data-label="Attempts">{item.send_attempts}</td><td data-label="When">{formatDate(item.created_at)}</td><td data-label="Action">{!readOnly && item.decision === "send_failed" ? <button className="btn" type="button" disabled={retrying === item.id} onClick={() => void retry(item)}>{retrying === item.id ? "Retrying…" : "Retry"}</button> : "—"}</td></tr>)}
           </tbody></table></div>}
         </Card>
       </>}

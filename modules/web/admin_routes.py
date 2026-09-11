@@ -9,7 +9,7 @@ from uuid import uuid4
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import String, cast, func, or_, select
 
-from modules import entitlements
+from modules import entitlements, missed_call as missed_call_service
 from modules.auth import passwords, sessions
 from modules.auth.decorators import require_platform_admin, require_platform_operator
 from modules.conversation_store import normalize_phone
@@ -33,7 +33,12 @@ from modules.serializers import (
     phone_number_dto,
     user_dto,
 )
-from modules.tenancy import assign_phone_number, record_audit_event
+from modules.tenancy import (
+    LEGACY_BUSINESS_ID,
+    assign_phone_number,
+    effective_settings,
+    record_audit_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -496,6 +501,66 @@ def revoke_user_sessions(user_id: str):
     return jsonify({"revoked": count}), 200
 
 
+@admin_bp.post("/businesses/<business_id>/missed-calls/<int:event_id>/retry")
+@require_platform_admin
+def retry_missed_call(business_id: str, event_id: int):
+    event = g.db.execute(
+        select(MissedCallEvent).where(
+            MissedCallEvent.id == event_id,
+            MissedCallEvent.business_id == business_id,
+        )
+    ).scalar_one_or_none()
+    business = g.db.get(Business, business_id)
+    if event is None or business is None:
+        return jsonify({"error": "Missed-call event not found."}), 404
+    if event.decision != "send_failed":
+        return jsonify({"error": "Only failed send attempts can be retried."}), 409
+
+    number = g.db.execute(
+        select(BusinessPhoneNumber).where(
+            BusinessPhoneNumber.business_id == business_id,
+            BusinessPhoneNumber.phone == event.twilio_number,
+        )
+    ).scalar_one_or_none()
+    if number is not None:
+        settings = effective_settings(business, number)
+        rules = settings.get("missed_calls") or None
+    elif business_id == LEGACY_BUSINESS_ID:
+        rules = None
+    else:
+        rules = (business.settings or {}).get("missed_calls") or None
+
+    is_demo = bool(((business.settings or {}).get("intake") or {}).get("demo_disclaimer"))
+    outcome = missed_call_service.process_missed_call(
+        g.db,
+        caller_phone=event.caller_phone,
+        twilio_number=event.twilio_number,
+        forwarded_from=event.forwarded_from or "",
+        call_sid=event.call_sid,
+        business_name=business.name,
+        is_demo=is_demo,
+        business_id=business_id,
+        rules=rules,
+        call_status=event.call_status or "",
+        call_duration_seconds=event.call_duration_seconds,
+    )
+    record_audit_event(
+        g.db,
+        action="missed_call.retry",
+        target_type="missed_call_event",
+        target_id=str(event.id),
+        business_id=business_id,
+        actor_user_id=g.current_user.id,
+        details={"result": outcome.decision.reason, "sent": outcome.message_sent},
+    )
+    g.db.commit()
+    g.db.refresh(event)
+    status = 200 if outcome.message_sent else 409
+    return jsonify(
+        {"event": missed_call_dto(event), "result": outcome.decision.reason}
+    ), status
+
+
 @admin_bp.get("/audit-events")
 @require_platform_operator
 def list_audit_events():
@@ -608,22 +673,43 @@ def platform_delivery():
         .limit(100)
     ).all()
     total = g.db.execute(select(func.count()).select_from(MissedCallEvent)).scalar_one()
-    queued = g.db.execute(
+    submitted = g.db.execute(
         select(func.count())
         .select_from(MissedCallEvent)
         .where(MissedCallEvent.message_sid.is_not(None))
+    ).scalar_one()
+    delivered = g.db.execute(
+        select(func.count())
+        .select_from(MissedCallEvent)
+        .where(MissedCallEvent.delivery_status == "delivered")
+    ).scalar_one()
+    failed = g.db.execute(
+        select(func.count())
+        .select_from(MissedCallEvent)
+        .where(MissedCallEvent.delivery_status.in_({"failed", "undelivered"}))
     ).scalar_one()
     items = []
     for event, business in rows:
         item = missed_call_dto(event)
         item["business"] = {"id": business.id, "name": business.name}
-        item["delivery_status"] = "queued" if event.message_sid else "not_sent"
+        item["delivery_status"] = event.delivery_status or (
+            "queued" if event.message_sid else "not_sent"
+        )
         items.append(item)
     return jsonify(
         {
-            "metrics": {"attempted": total, "queued": queued, "not_sent": total - queued},
+            "metrics": {
+                "events": total,
+                "submitted": submitted,
+                "delivered": delivered,
+                "failed": failed,
+                "not_sent": total - submitted,
+            },
             "items": items,
-            "notice": "Provider delivery receipts are not stored yet; queued does not mean delivered.",
+            "notice": (
+                "Queued and sent are provider progress states. Only delivered confirms receipt; "
+                "older events may remain queued if no callback was configured."
+            ),
         }
     ), 200
 

@@ -35,10 +35,23 @@ operations access while platform admins retain every mutation. The client
 Overview now shows recent leads, recent conversations, seven-day lead activity,
 and source attribution from stored tenant data.
 
-This batch deliberately does not change missed-call processing or connect a
+The dashboard-completion batch deliberately did not change missed-call processing or connect a
 calendar. Delivery status reflects the persisted Twilio queue result only; it
 does not claim carrier delivery until provider receipts are stored. Calendar
 metrics remain unavailable until the separate calendar integration batch.
+
+## Missed-call processing hardening
+
+The following isolated batch now records call disposition and duration, send
+attempt counts, sanitized Twilio error codes, and signed delivery-status
+callbacks. Failed API sends can be retried by a platform admin from the
+Delivery screen; the retry is bounded, atomically claimed, and rechecks current
+feature, allowlist/blocklist, opt-out, and cooldown rules before sending.
+
+This change does not enable missed-call automation. `MISSED_CALLS_ENABLED`
+remains false in `render.yaml`, tenant routing remains false, and the calendar
+is untouched. Production activation still requires a real conditional-forwarding
+smoke test from an allowlisted number.
 
 ## What is deliberately NOT deployed
 

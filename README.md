@@ -159,6 +159,7 @@ MISSED_CALL_REQUIRE_ALLOWLIST=true
 MISSED_CALL_ALLOWLIST=+15555550100
 MISSED_CALL_BLOCKLIST=
 MISSED_CALL_COOLDOWN_MINUTES=5
+MISSED_CALL_MAX_SEND_ATTEMPTS=2
 ```
 
 After deploying the route and confirming a forwarded call appears in Render
@@ -168,6 +169,11 @@ set `MISSED_CALL_COOLDOWN_MINUTES=1440` to limit the first follow-up to one per
 caller per 24 hours. `STOP` opt-outs and numbers in `MISSED_CALL_BLOCKLIST`
 are always suppressed.
 
+`MISSED_CALL_MAX_SEND_ATTEMPTS=2` permits one bounded recovery attempt when
+Twilio rejects or times out during the initial send. The same `CallSid` is
+claimed atomically, so concurrent webhook retries cannot send duplicates. A
+caller who opts out before the retry remains suppressed.
+
 Set the Twilio number's **Voice & Fax → A call comes in** webhook to:
 
 ```text
@@ -176,8 +182,9 @@ https://<your-render-service>.onrender.com/voice/missed-call
 
 Use `POST` and set `PUBLIC_BASE_URL` to the same Render origin so request
 signature validation succeeds behind Render's proxy. `missed_call_events`
-stores each CallSid, source, rule decision, and outbound MessageSid; it is the
-audit trail for the dashboard you build later.
+stores each CallSid, source, rule decision, send attempt, outbound MessageSid,
+and Twilio delivery callback. Configure `PUBLIC_BASE_URL` so outbound messages
+register `/voice/missed-call/status` as their signed status callback.
 
 ---
 

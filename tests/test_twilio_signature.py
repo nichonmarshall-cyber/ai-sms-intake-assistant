@@ -51,3 +51,18 @@ def test_voice_webhook_requires_a_valid_signature(make_app):
     resp = client.post("/voice/missed-call", data=data, headers={"X-Twilio-Signature": "totally-invalid"})
 
     assert resp.status_code == 403
+
+
+def test_delivery_status_callback_requires_a_valid_signature(make_app):
+    app_module = make_app(
+        APP_MODE="demo",
+        TWILIO_VALIDATION_BYPASS="false",
+        TWILIO_AUTH_TOKEN="real-secret-token",
+    )
+    response = app_module.app.test_client().post(
+        "/voice/missed-call/status",
+        data={"MessageSid": "SM-status", "MessageStatus": "delivered"},
+        headers={"X-Twilio-Signature": "totally-invalid"},
+    )
+
+    assert response.status_code == 403

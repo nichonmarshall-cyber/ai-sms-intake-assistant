@@ -64,6 +64,12 @@ def missed_call_dto(event) -> dict:
         "source": event.source,
         "decision": event.decision,
         "message_sid": event.message_sid,
+        "call_status": event.call_status,
+        "call_duration_seconds": event.call_duration_seconds,
+        "delivery_status": event.delivery_status,
+        "send_attempts": event.send_attempts,
+        "last_attempt_at": _iso(event.last_attempt_at),
+        "error_code": event.error_code,
         "archived_at": _iso(event.archived_at),
         "created_at": _iso(event.created_at),
     }

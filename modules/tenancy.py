@@ -56,6 +56,7 @@ DEFAULT_BUSINESS_SETTINGS = {
     "missed_calls": {
         "enabled": False,
         "cooldown_minutes": 1440,
+        "max_send_attempts": 2,
         "require_allowlist": False,
         "allowlist": [],
         "blocklist": [],

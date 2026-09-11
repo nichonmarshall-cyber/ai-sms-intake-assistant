@@ -12,6 +12,7 @@ def test_existing_routes_are_registered_at_their_original_paths(demo_app):
 
     assert rules.get("/sms") == ["POST"]
     assert rules.get("/voice/missed-call") == ["POST"]
+    assert rules.get("/voice/missed-call/status") == ["POST"]
     assert rules.get("/health") == ["GET"]
     assert rules.get("/reset") == ["POST"]
 

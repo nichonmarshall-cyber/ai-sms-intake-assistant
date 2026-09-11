@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session as DBSession
 from twilio.rest import Client
@@ -79,6 +79,16 @@ def _cooldown_minutes(settings: dict | None = None) -> int:
         return 5
 
 
+def _max_send_attempts(settings: dict | None = None) -> int:
+    try:
+        if settings is not None and "max_send_attempts" in settings:
+            return min(5, max(1, int(settings["max_send_attempts"])))
+        return min(5, max(1, int(os.getenv("MISSED_CALL_MAX_SEND_ATTEMPTS", "2"))))
+    except (TypeError, ValueError):
+        logger.warning("[missed_call] Invalid max send attempts; using 2.")
+        return 2
+
+
 def _is_valid_phone(number: str) -> bool:
     return bool(_E164_RE.fullmatch(normalize_phone(number)))
 
@@ -111,6 +121,8 @@ def should_start_missed_call_intake(
     call_sid: str,
     business_id: str | None = None,
     rules: dict | None = None,
+    call_disposition: str = "",
+    ignore_duplicate: bool = False,
 ) -> MissedCallDecision:
     """Applies the feature flag, contact, opt-out, and cooldown rules."""
     caller_phone = normalize_phone(caller_phone)
@@ -118,6 +130,8 @@ def should_start_missed_call_intake(
 
     if not call_sid:
         return MissedCallDecision(False, "missing_call_sid")
+    if call_disposition.strip().lower() in {"completed", "answered"}:
+        return MissedCallDecision(False, "answered_call")
     if not _configured_enabled(rules, "enabled", "MISSED_CALLS_ENABLED", default=False):
         return MissedCallDecision(False, "feature_disabled")
     if not _is_valid_phone(caller_phone):
@@ -143,11 +157,12 @@ def should_start_missed_call_intake(
     if session is not None and session.opted_out:
         return MissedCallDecision(False, "caller_opted_out")
 
-    duplicate = db.execute(
-        select(MissedCallEvent.id).where(MissedCallEvent.call_sid == call_sid)
-    ).scalar_one_or_none()
-    if duplicate is not None:
-        return MissedCallDecision(False, "duplicate_call_sid")
+    if not ignore_duplicate:
+        duplicate = db.execute(
+            select(MissedCallEvent.id).where(MissedCallEvent.call_sid == call_sid)
+        ).scalar_one_or_none()
+        if duplicate is not None:
+            return MissedCallDecision(False, "duplicate_call_sid")
 
     cooldown_minutes = _cooldown_minutes(rules)
     if cooldown_minutes:
@@ -175,6 +190,8 @@ def _record_event(
     forwarded_from: str,
     decision: MissedCallDecision,
     business_id: str | None = None,
+    call_status: str = "",
+    call_duration_seconds: int | None = None,
 ) -> MissedCallEvent | None:
     """Creates the idempotency record before an outbound SMS can be sent.
 
@@ -188,7 +205,11 @@ def _record_event(
         twilio_number=normalize_phone(twilio_number),
         forwarded_from=normalize_phone(forwarded_from) or None,
         source="missed_call",
-        decision=decision.reason,
+        decision="sending" if decision.allowed else decision.reason,
+        call_status=(call_status or "").strip().lower() or None,
+        call_duration_seconds=call_duration_seconds,
+        send_attempts=1 if decision.allowed else 0,
+        last_attempt_at=datetime.now(timezone.utc) if decision.allowed else None,
     )
     db.add(event)
     try:
@@ -209,12 +230,66 @@ def _send_initial_sms(*, caller_phone: str, twilio_number: str, body: str) -> st
         raise RuntimeError("Twilio credentials are missing.")
 
     client = Client(account_sid, auth_token)
+    create_args = {
+        "to": caller_phone,
+        "from_": twilio_number,
+        "body": body,
+    }
+    public_base_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
+    if public_base_url:
+        create_args["status_callback"] = f"{public_base_url}/voice/missed-call/status"
     message = client.messages.create(
-        to=caller_phone,
-        from_=twilio_number,
-        body=body,
+        **create_args,
     )
     return message.sid
+
+
+_DELIVERY_RANK = {"queued": 0, "sending": 1, "sent": 2, "delivered": 3}
+_TERMINAL_DELIVERY_STATUSES = {"delivered", "undelivered", "failed"}
+
+
+def record_delivery_status(
+    db: DBSession,
+    *,
+    message_sid: str,
+    status: str,
+    error_code: str = "",
+) -> bool:
+    """Stores a validated, monotonic Twilio delivery callback.
+
+    Returns ``False`` for an unknown MessageSid or unsupported status so the
+    route can acknowledge the callback without mutating unrelated records.
+    """
+    normalized_status = (status or "").strip().lower()
+    allowed = set(_DELIVERY_RANK) | {"undelivered", "failed"}
+    if not message_sid or normalized_status not in allowed:
+        return False
+
+    event = db.execute(
+        select(MissedCallEvent).where(MissedCallEvent.message_sid == message_sid)
+    ).scalar_one_or_none()
+    if event is None:
+        return False
+
+    current = (event.delivery_status or "").strip().lower()
+    if current in _TERMINAL_DELIVERY_STATUSES and current != normalized_status:
+        return True
+    if (
+        current in _DELIVERY_RANK
+        and normalized_status in _DELIVERY_RANK
+        and _DELIVERY_RANK[normalized_status] < _DELIVERY_RANK[current]
+    ):
+        return True
+
+    event.delivery_status = normalized_status
+    event.error_code = (
+        (error_code or "").strip()[:64]
+        if normalized_status in {"undelivered", "failed"}
+        else None
+    )
+    db.add(event)
+    db.commit()
+    return True
 
 
 def process_missed_call(
@@ -228,6 +303,9 @@ def process_missed_call(
     is_demo: bool,
     business_id: str | None = None,
     rules: dict | None = None,
+    call_status: str = "",
+    call_disposition: str = "",
+    call_duration_seconds: int | None = None,
 ) -> MissedCallOutcome:
     """Records a forwarded call and sends its single permitted follow-up SMS."""
     decision = should_start_missed_call_intake(
@@ -237,26 +315,79 @@ def process_missed_call(
         call_sid=call_sid,
         business_id=business_id,
         rules=rules,
+        call_disposition=call_disposition,
     )
 
     if not call_sid:
         logger.warning("[missed_call] Ignored webhook without CallSid.")
         return MissedCallOutcome(decision=decision, message_sent=False)
 
-    event = _record_event(
-        db,
-        call_sid=call_sid,
-        caller_phone=caller_phone,
-        twilio_number=twilio_number,
-        forwarded_from=forwarded_from,
-        decision=decision,
-        business_id=business_id,
-    )
-    if event is None:
-        return MissedCallOutcome(
-            decision=MissedCallDecision(False, "duplicate_call_sid"),
-            message_sent=False,
+    event = None
+    if decision.reason == "duplicate_call_sid":
+        event = db.execute(
+            select(MissedCallEvent).where(MissedCallEvent.call_sid == call_sid)
+        ).scalar_one_or_none()
+        if event is None or event.decision != "send_failed":
+            return MissedCallOutcome(decision=decision, message_sent=False)
+
+        retry_decision = should_start_missed_call_intake(
+            db,
+            caller_phone=caller_phone,
+            twilio_number=twilio_number,
+            call_sid=call_sid,
+            business_id=business_id,
+            rules=rules,
+            call_disposition=call_disposition,
+            ignore_duplicate=True,
         )
+        if not retry_decision.allowed:
+            return MissedCallOutcome(decision=retry_decision, message_sent=False)
+
+        max_attempts = _max_send_attempts(rules)
+        if event.send_attempts >= max_attempts:
+            return MissedCallOutcome(
+                decision=MissedCallDecision(False, "retry_exhausted"),
+                message_sent=False,
+            )
+        claimed = db.execute(
+            update(MissedCallEvent)
+            .where(
+                MissedCallEvent.id == event.id,
+                MissedCallEvent.decision == "send_failed",
+                MissedCallEvent.send_attempts < max_attempts,
+            )
+            .values(
+                decision="retrying",
+                send_attempts=MissedCallEvent.send_attempts + 1,
+                last_attempt_at=datetime.now(timezone.utc),
+                error_code=None,
+            )
+        )
+        db.commit()
+        if claimed.rowcount != 1:
+            return MissedCallOutcome(
+                decision=MissedCallDecision(False, "duplicate_call_sid"),
+                message_sent=False,
+            )
+        db.refresh(event)
+        decision = MissedCallDecision(True, "retrying")
+    else:
+        event = _record_event(
+            db,
+            call_sid=call_sid,
+            caller_phone=caller_phone,
+            twilio_number=twilio_number,
+            forwarded_from=forwarded_from,
+            decision=decision,
+            business_id=business_id,
+            call_status=call_status,
+            call_duration_seconds=call_duration_seconds,
+        )
+        if event is None:
+            return MissedCallOutcome(
+                decision=MissedCallDecision(False, "duplicate_call_sid"),
+                message_sent=False,
+            )
 
     if not decision.allowed:
         logger.info(
@@ -274,8 +405,10 @@ def process_missed_call(
             twilio_number=normalize_phone(twilio_number),
             body=initial_sms_text(business_name=business_name, is_demo=is_demo),
         )
-    except Exception:
+    except Exception as exc:
         event.decision = "send_failed"
+        event.delivery_status = "failed"
+        event.error_code = str(getattr(exc, "code", None) or "send_error")[:64]
         db.add(event)
         db.commit()
         logger.exception(
@@ -290,6 +423,8 @@ def process_missed_call(
 
     event.decision = "sent"
     event.message_sid = message_sid
+    event.delivery_status = "queued"
+    event.error_code = None
     db.add(event)
     db.commit()
     logger.info(

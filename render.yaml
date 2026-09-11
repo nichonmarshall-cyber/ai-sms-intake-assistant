@@ -45,6 +45,8 @@ services:
         sync: false
       - key: MISSED_CALL_COOLDOWN_MINUTES
         value: "5"
+      - key: MISSED_CALL_MAX_SEND_ATTEMPTS
+        value: "2"
       - key: MAX_TURNS
         value: "15"
       - key: MAX_HISTORY

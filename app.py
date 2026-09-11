@@ -534,6 +534,16 @@ def missed_call_intake():
     twilio_number = request.form.get("To", "").strip()
     forwarded_from = request.form.get("ForwardedFrom", "").strip()
     call_sid = request.form.get("CallSid", "").strip()
+    call_status = request.form.get("CallStatus", "").strip()
+    dial_call_status = request.form.get("DialCallStatus", "").strip()
+    raw_duration = (
+        request.form.get("DialCallDuration", "").strip()
+        or request.form.get("CallDuration", "").strip()
+    )
+    try:
+        call_duration_seconds = max(0, int(raw_duration)) if raw_duration else None
+    except ValueError:
+        call_duration_seconds = None
 
     try:
         db = session_scope()
@@ -556,11 +566,51 @@ def missed_call_intake():
             is_demo=runtime.is_demo,
             business_id=runtime.business_id,
             rules=runtime.settings.get("missed_calls") or None,
+            call_status=dial_call_status or call_status,
+            call_disposition=dial_call_status,
+            call_duration_seconds=call_duration_seconds,
         )
         return _voice_twiml(outcome.message_sent), 200, {"Content-Type": "text/xml"}
     except Exception:
         logger.exception("[missed_call] Unhandled error processing CallSid=%s.", call_sid or "missing")
         return _voice_twiml(False), 200, {"Content-Type": "text/xml"}
+    finally:
+        db.close()
+
+
+@app.route("/voice/missed-call/status", methods=["POST"])
+@limiter.limit("60 per minute")
+def missed_call_delivery_status():
+    """Receives Twilio's outbound SMS status callback for missed-call follow-up."""
+    twilio_helper.validate_twilio_request()
+    message_sid = request.form.get("MessageSid", "").strip()
+    message_status = request.form.get("MessageStatus", "").strip()
+    error_code = request.form.get("ErrorCode", "").strip()
+
+    db = session_scope()
+    try:
+        found = missed_call.record_delivery_status(
+            db,
+            message_sid=message_sid,
+            status=message_status,
+            error_code=error_code,
+        )
+        if not found:
+            logger.warning(
+                "[missed_call] Ignored delivery callback sid=%s status=%s",
+                message_sid or "missing",
+                message_status or "missing",
+            )
+        return "", 204
+    except Exception:
+        db.rollback()
+        logger.exception(
+            "[missed_call] Failed to store delivery callback sid=%s",
+            message_sid or "missing",
+        )
+        # Twilio retries non-2xx callbacks; returning 503 makes a transient DB
+        # failure recoverable without duplicating an outbound message.
+        return "", 503
     finally:
         db.close()
 

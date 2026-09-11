@@ -663,7 +663,7 @@ export function ControlCenterRoutes({ readOnly }: { readOnly: boolean }) {
       <Route path="businesses" element={<BusinessList readOnly={readOnly} />} />
       <Route path="businesses/:businessId" element={<BusinessDetail readOnly={readOnly} />} />
       <Route path="conversations" element={<PlatformConversations />} />
-      <Route path="delivery" element={<DeliveryDiagnostics />} />
+      <Route path="delivery" element={<DeliveryDiagnostics readOnly={readOnly} />} />
       <Route path="webhooks" element={<WebhookDiagnostics />} />
       <Route path="audit" element={<AuditLog />} />
       <Route path="*" element={<EmptyState title="Page not found" body="That Control Center page does not exist." />} />
