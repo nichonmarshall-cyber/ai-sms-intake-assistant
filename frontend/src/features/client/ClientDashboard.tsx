@@ -2,7 +2,9 @@ import { useCallback, useEffect, useState } from "react";
 import { Link, Route, Routes, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import type {
+  AppointmentRequest,
   Business,
+  CalendarConnection,
   ConversationSummary,
   Lead,
   LeadWorkflowStatus,
@@ -23,6 +25,7 @@ import {
 } from "../../components";
 import { Conversations } from "./Conversations";
 import { AIIntake } from "./AIIntake";
+import { Appointments } from "./Appointments";
 
 interface OverviewPayload {
   metrics: {
@@ -30,9 +33,12 @@ interface OverviewPayload {
     new_leads: number;
     open_conversations: number;
     missed_calls_handled: number;
+    pending_approval: number;
   };
   recent_leads: Lead[];
   recent_conversations: ConversationSummary[];
+  appointment_requests: AppointmentRequest[];
+  calendar: CalendarConnection;
   lead_sources: { source: string; count: number }[];
   lead_activity: { date: string; count: number }[];
   unavailable: UnavailableMetric[];
@@ -370,7 +376,7 @@ function Overview({ businessId }: { businessId: string }) {
           <div className="stat-grid">
             <Stat label="New leads" value={data.metrics.new_leads} icon="◆" />
             <Stat label="Open conversations" value={data.metrics.open_conversations} icon="◉" />
-            <Stat label="Total leads" value={data.metrics.total_leads} icon="◈" />
+            <Stat label="Pending approval" value={data.metrics.pending_approval} icon="◷" />
             <Stat label="Missed calls handled" value={data.metrics.missed_calls_handled} icon="✆" />
           </div>
 
@@ -393,6 +399,28 @@ function Overview({ businessId }: { businessId: string }) {
               )}
             </Card>
 
+            <Card title="Appointment requests" action={<Link className="table__link" to="appointments">View all</Link>}>
+              {data.appointment_requests.length === 0 ? (
+                <EmptyState title="No pending requests" body="New scheduling preferences will appear here." />
+              ) : (
+                <div className="overview-appointments">
+                  {data.appointment_requests.map((appointment) => (
+                    <Link className="overview-appointment" to="appointments" key={appointment.id}>
+                      <span className="overview-appointment__date" aria-hidden="true">▣</span>
+                      <span><strong>{appointment.customer_name || appointment.customer_phone}</strong><small>{appointment.service_request || "Service appointment"}</small><small>{appointment.requested_time_text || "Time not provided"}</small></span>
+                      <span className="btn btn--primary">Review & schedule</span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+              <div className={data.calendar.connected ? "calendar-banner calendar-banner--ok calendar-banner--compact" : "calendar-banner calendar-banner--warn calendar-banner--compact"}>
+                <span>{data.calendar.connected ? "✓" : "!"}</span>
+                <strong>{data.calendar.connected ? `${data.calendar.calendar_name} connected` : "Calendar not connected"}</strong>
+              </div>
+            </Card>
+          </div>
+
+          <div className="overview-live-grid overview-live-grid--activity">
             <Card title="Recent conversations" action={<Link className="table__link" to="conversations">View all</Link>}>
               {data.recent_conversations.length === 0 ? (
                 <EmptyState title="No conversations yet" body="SMS intake conversations will appear here." />
@@ -400,21 +428,13 @@ function Overview({ businessId }: { businessId: string }) {
                 <div className="overview-list">
                   {data.recent_conversations.map((conversation) => (
                     <Link className="overview-list__item" to="conversations" key={conversation.id}>
-                      <span>
-                        <strong>{conversation.customer_name || conversation.phone}</strong>
-                        <small>{conversation.last_message || "No stored message"}</small>
-                      </span>
-                      <Badge tone={conversation.state === "completed" ? "ok" : "demo"}>
-                        {conversation.state === "completed" ? "Completed" : "Active"}
-                      </Badge>
+                      <span><strong>{conversation.customer_name || conversation.phone}</strong><small>{conversation.last_message || "No stored message"}</small></span>
+                      <Badge tone={conversation.state === "completed" ? "ok" : "demo"}>{conversation.state === "completed" ? "Completed" : "Active"}</Badge>
                     </Link>
                   ))}
                 </div>
               )}
             </Card>
-          </div>
-
-          <div className="overview-live-grid overview-live-grid--activity">
             <Card title="Lead activity · last 7 days">
               <div className="activity-chart" role="img" aria-label="New leads per day for the last seven days">
                 {data.lead_activity.map((item) => (
@@ -429,22 +449,10 @@ function Overview({ businessId }: { businessId: string }) {
               </div>
             </Card>
 
-            <Card title="Lead sources">
-              {data.lead_sources.length === 0 ? (
-                <EmptyState title="No source data" body="Lead attribution will appear as intake records are captured." />
-              ) : (
-                <div className="source-list">
-                  {data.lead_sources.map((item) => (
-                    <div key={item.source}><span>{item.source.replace(/_/g, " ")}</span><strong>{item.count}</strong></div>
-                  ))}
-                </div>
-              )}
-            </Card>
           </div>
-
-          <p className="data-boundary-note">
-            Calendar availability and provider delivery rates remain unavailable until their separate integrations are connected.
-          </p>
+          <Card title="Lead sources">
+            {data.lead_sources.length === 0 ? <EmptyState title="No source data" body="Lead attribution will appear as intake records are captured." /> : <div className="source-list">{data.lead_sources.map((item) => <div key={item.source}><span>{item.source.replace(/_/g, " ")}</span><strong>{item.count}</strong></div>)}</div>}
+          </Card>
         </>
       )}
     </>
@@ -454,19 +462,29 @@ function Overview({ businessId }: { businessId: string }) {
 function Settings({ businessId, readOnly }: { businessId: string; readOnly: boolean }) {
   const heading = useFocusOnMount<HTMLHeadingElement>();
   const [business, setBusiness] = useState<Business | null>(null);
+  const [calendar, setCalendar] = useState<CalendarConnection | null>(null);
   const [name, setName] = useState("");
+  const [calendarId, setCalendarId] = useState("");
+  const [timezone, setTimezone] = useState("America/Chicago");
+  const [duration, setDuration] = useState(60);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [calendarError, setCalendarError] = useState<string | null>(null);
+  const [calendarStatus, setCalendarStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const payload = await api.get<{ business: Business }>(
+      const payload = await api.get<{ business: Business; calendar: CalendarConnection }>(
         `/api/dashboard/businesses/${businessId}/settings`,
       );
       setBusiness(payload.business);
       setName(payload.business.name);
+      setCalendar(payload.calendar);
+      setCalendarId(payload.calendar.calendar_id);
+      setTimezone(payload.calendar.timezone);
+      setDuration(payload.calendar.default_duration_minutes);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load settings.");
@@ -488,6 +506,36 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not save.");
+    }
+  };
+
+  const connectCalendar = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setCalendarStatus(null);
+    setCalendarError(null);
+    try {
+      const payload = await api.post<{ connection: CalendarConnection }>(
+        `/api/dashboard/businesses/${businessId}/calendar/verify`,
+        { calendar_id: calendarId, timezone, default_duration_minutes: duration },
+      );
+      setCalendar(payload.connection);
+      setCalendarStatus("Google Calendar connected and verified.");
+    } catch (err) {
+      setCalendarError(err instanceof Error ? err.message : "Could not verify Google Calendar.");
+    }
+  };
+
+  const disconnectCalendar = async () => {
+    if (!window.confirm("Disconnect Google Calendar from this business?")) return;
+    try {
+      const payload = await api.post<{ connection: CalendarConnection }>(
+        `/api/dashboard/businesses/${businessId}/calendar/disconnect`,
+      );
+      setCalendar(payload.connection);
+      setCalendarId("");
+      setCalendarStatus("Calendar disconnected.");
+    } catch (err) {
+      setCalendarError(err instanceof Error ? err.message : "Could not disconnect the calendar.");
     }
   };
 
@@ -532,6 +580,39 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
           </button>
         </form>
       </Card>
+
+      <div className="settings-section">
+        <Card title="Google Calendar">
+          <div className={calendar?.connected ? "calendar-banner calendar-banner--ok" : "calendar-banner calendar-banner--warn"}>
+            <span>{calendar?.connected ? "✓" : "!"}</span>
+            <strong>{calendar?.connected ? `${calendar.calendar_name} connected` : "Not connected"}</strong>
+            <span>{calendar?.connected ? "Approved requests create real Google Calendar events." : "A platform service account is required before this can be verified."}</span>
+          </div>
+          <form onSubmit={connectCalendar} noValidate>
+            <Field label="Calendar ID" id="calendar-id">
+              <input id="calendar-id" className="input" value={calendarId} disabled={readOnly} placeholder="your-calendar@group.calendar.google.com" onChange={(event) => setCalendarId(event.target.value)} />
+            </Field>
+            <div className="calendar-settings-grid">
+              <Field label="Timezone" id="calendar-timezone">
+                <input id="calendar-timezone" className="input" value={timezone} disabled={readOnly} placeholder="America/Chicago" onChange={(event) => setTimezone(event.target.value)} />
+              </Field>
+              <Field label="Default appointment length" id="calendar-duration">
+                <select id="calendar-duration" className="input" value={duration} disabled={readOnly} onChange={(event) => setDuration(Number(event.target.value))}>
+                  {[30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>{minutes} minutes</option>)}
+                </select>
+              </Field>
+            </div>
+            {!calendar?.credentials_configured && <p className="data-boundary-note data-boundary-note--inside">NTX must configure the Google service-account credential on the server first.</p>}
+            {calendar?.service_account_email && <p className="data-boundary-note data-boundary-note--inside">Share the Google Calendar with <strong>{calendar.service_account_email}</strong> and give it permission to make changes to events.</p>}
+            {calendarError && <p className="field__error" role="alert">{calendarError}</p>}
+            {calendarStatus && <p className="calendar-success" role="status">{calendarStatus}</p>}
+            <div className="lead-detail__actions">
+              <button className="btn btn--primary" type="submit" disabled={readOnly || !calendar?.credentials_configured}>Verify & connect</button>
+              {calendar?.connected && <button className="btn" type="button" disabled={readOnly} onClick={() => void disconnectCalendar()}>Disconnect</button>}
+            </div>
+          </form>
+        </Card>
+      </div>
     </>
   );
 }
@@ -550,6 +631,7 @@ export function ClientDashboardRoutes({
       <Route index element={<Overview businessId={businessId} />} />
       <Route path="leads" element={<Leads businessId={businessId} readOnly={readOnly} />} />
       <Route path="conversations" element={<Conversations businessId={businessId} />} />
+      <Route path="appointments" element={<Appointments businessId={businessId} readOnly={readOnly} />} />
       <Route path="ai_intake" element={<AIIntake businessId={businessId} readOnly={readOnly} />} />
       <Route path="settings" element={<Settings businessId={businessId} readOnly={readOnly} />} />
       {modules

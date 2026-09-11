@@ -75,8 +75,8 @@ def test_local_activity_seed_adds_conversations_idempotently(demo_app):
     finally:
         db.close()
 
-    assert first == (5, 2, 3)
-    assert second == (0, 0, 0)
+    assert first == (5, 2, 3, 2)
+    assert second == (0, 0, 0, 0)
     assert len(sessions) == 3
 
 
@@ -105,7 +105,13 @@ def test_sqlite_alembic_upgrade_reaches_head(tmp_path):
 
     engine = sa.create_engine(f"sqlite:///{database_path}")
     tables = set(inspect(engine).get_table_names())
-    assert {"businesses", "business_modules", "platform_users", "user_sessions"} <= tables
+    assert {
+        "appointment_requests",
+        "businesses",
+        "business_modules",
+        "platform_users",
+        "user_sessions",
+    } <= tables
 
     with engine.connect() as connection:
         business = connection.execute(

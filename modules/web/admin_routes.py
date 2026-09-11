@@ -9,12 +9,13 @@ from uuid import uuid4
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import String, cast, func, or_, select
 
-from modules import entitlements, missed_call as missed_call_service
+from modules import calendar_service, entitlements, missed_call as missed_call_service
 from modules.auth import passwords, sessions
 from modules.auth.decorators import require_platform_admin, require_platform_operator
 from modules.conversation_store import normalize_phone
 from modules.models import (
     AuditEvent,
+    AppointmentRequest,
     Business,
     BusinessMembership,
     BusinessPhoneNumber,
@@ -25,6 +26,7 @@ from modules.models import (
     ProcessedMessage,
 )
 from modules.serializers import (
+    appointment_dto,
     audit_event_dto,
     business_dto,
     conversation_summary_dto,
@@ -593,12 +595,33 @@ def list_audit_events():
 @require_platform_operator
 def platform_overview():
     """Only metrics backed by real tables. No fabricated numbers."""
-    total_businesses = g.db.execute(
-        select(func.count()).select_from(Business).where(Business.status == "active")
-    ).scalar_one()
+    active_business_rows = list(
+        g.db.execute(select(Business).where(Business.status == "active")).scalars()
+    )
+    total_businesses = len(active_business_rows)
     total_leads = g.db.execute(select(func.count()).select_from(Lead)).scalar_one()
     total_missed = g.db.execute(select(func.count()).select_from(MissedCallEvent)).scalar_one()
     total_users = g.db.execute(select(func.count()).select_from(PlatformUser)).scalar_one()
+    pending_appointments = g.db.execute(
+        select(func.count())
+        .select_from(AppointmentRequest)
+        .where(AppointmentRequest.status.in_({"pending", "sync_failed"}))
+    ).scalar_one()
+    connected_calendars = sum(
+        1 for business in active_business_rows
+        if calendar_service.connection_dto(business)["connected"]
+    )
+    calendar_failures = g.db.execute(
+        select(func.count())
+        .select_from(AppointmentRequest)
+        .where(AppointmentRequest.status == "sync_failed")
+    ).scalar_one()
+    if connected_calendars == 0:
+        calendar_status = "not_configured"
+    elif connected_calendars < total_businesses or calendar_failures:
+        calendar_status = "degraded"
+    else:
+        calendar_status = "operational"
 
     return jsonify(
         {
@@ -606,11 +629,53 @@ def platform_overview():
             "leads": total_leads,
             "missed_calls": total_missed,
             "users": total_users,
+            "calendar": {
+                "connected_businesses": connected_calendars,
+                "pending_appointments": pending_appointments,
+                "status": calendar_status,
+            },
             "unavailable": [
                 {"key": "websites_online", "reason": "No monitoring provider configured."},
                 {"key": "sms_usage", "reason": "Twilio usage API not connected."},
                 {"key": "active_alerts", "reason": "Alerts arrive in Phase 3."},
             ],
+        }
+    ), 200
+
+
+@admin_bp.get("/calendar")
+@require_platform_operator
+def platform_calendar():
+    businesses = list(g.db.execute(select(Business).order_by(Business.name)).scalars())
+    connection_rows = [
+        {
+            "business": {"id": business.id, "name": business.name, "slug": business.slug},
+            "connection": calendar_service.connection_dto(business),
+        }
+        for business in businesses
+    ]
+    rows = g.db.execute(
+        select(AppointmentRequest, Business)
+        .join(Business, AppointmentRequest.business_id == Business.id)
+        .order_by(AppointmentRequest.created_at.desc(), AppointmentRequest.id.desc())
+        .limit(100)
+    ).all()
+    items = []
+    for appointment, business in rows:
+        item = appointment_dto(appointment)
+        item["business"] = {"id": business.id, "name": business.name, "slug": business.slug}
+        items.append(item)
+    return jsonify(
+        {
+            "metrics": {
+                "businesses": len(businesses),
+                "connected": sum(1 for row in connection_rows if row["connection"]["connected"]),
+                "pending": sum(1 for item in items if item["status"] in {"pending", "sync_failed"}),
+                "scheduled": sum(1 for item in items if item["status"] == "scheduled"),
+                "sync_failed": sum(1 for item in items if item["status"] == "sync_failed"),
+            },
+            "connections": connection_rows,
+            "items": items,
         }
     ), 200
 

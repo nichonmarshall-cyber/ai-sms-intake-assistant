@@ -67,6 +67,14 @@ DEFAULT_BUSINESS_SETTINGS = {
         "close_hour": 17,
         "workdays": [0, 1, 2, 3, 4],
     },
+    "calendar": {
+        "provider": "google",
+        "calendar_id": "",
+        "calendar_name": "",
+        "timezone": "America/Chicago",
+        "verified_at": None,
+        "default_duration_minutes": 60,
+    },
 }
 
 

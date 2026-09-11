@@ -35,10 +35,9 @@ operations access while platform admins retain every mutation. The client
 Overview now shows recent leads, recent conversations, seven-day lead activity,
 and source attribution from stored tenant data.
 
-The dashboard-completion batch deliberately did not change missed-call processing or connect a
-calendar. Delivery status reflects the persisted Twilio queue result only; it
-does not claim carrier delivery until provider receipts are stored. Calendar
-metrics remain unavailable until the separate calendar integration batch.
+The dashboard-completion batch deliberately did not change missed-call
+processing or connect a calendar. Those isolated follow-up batches are
+documented below so provider failures cannot derail the core dashboard release.
 
 ## Missed-call processing hardening
 
@@ -52,6 +51,19 @@ This change does not enable missed-call automation. `MISSED_CALLS_ENABLED`
 remains false in `render.yaml`, tenant routing remains false, and the calendar
 is untouched. Production activation still requires a real conditional-forwarding
 smoke test from an allowlisted number.
+
+## Calendar integration
+
+The separate calendar batch adds tenant-scoped appointment requests, a client
+Appointments workspace, Google Calendar verification in Settings, and
+cross-tenant calendar health in the Control Center. Intake preferences remain
+requests until an authorized owner, manager, or staff user chooses an exact
+time and Google returns an event ID. Provider failures remain visible and can
+be retried without losing the lead.
+
+The platform service-account credential is configured only through
+`GOOGLE_SERVICE_ACCOUNT_JSON`; business settings store only the calendar ID,
+timezone, display name, and verification timestamp.
 
 ## What is deliberately NOT deployed
 

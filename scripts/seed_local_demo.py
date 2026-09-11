@@ -21,6 +21,7 @@ from modules import entitlements
 from modules.auth import passwords
 from modules.db import get_database_url, init_db, is_sqlite, session_scope
 from modules.models import (
+    AppointmentRequest,
     Business,
     BusinessMembership,
     ConversationSession,
@@ -265,7 +266,7 @@ def _ensure_membership(db, *, business_id: str, user_id: str) -> None:
         membership.role = "owner"
 
 
-def _seed_activity(db, *, business_id: str) -> tuple[int, int, int]:
+def _seed_activity(db, *, business_id: str) -> tuple[int, int, int, int]:
     now = datetime.now(timezone.utc)
     lead_count = 0
     for item in SAMPLE_LEADS:
@@ -301,6 +302,39 @@ def _seed_activity(db, *, business_id: str) -> tuple[int, int, int]:
             )
         )
         lead_count += 1
+
+    db.flush()
+    appointment_count = 0
+    sample_preferences = {
+        "+12145550101": "Friday morning",
+        "+12145550102": "Tomorrow after 1 PM",
+    }
+    for phone, preference in sample_preferences.items():
+        lead = db.execute(
+            select(Lead).where(Lead.business_id == business_id, Lead.phone == phone)
+        ).scalar_one_or_none()
+        if lead is None:
+            continue
+        existing = db.execute(
+            select(AppointmentRequest).where(
+                AppointmentRequest.business_id == business_id,
+                AppointmentRequest.lead_id == lead.id,
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            continue
+        db.add(
+            AppointmentRequest(
+                business_id=business_id,
+                lead_id=lead.id,
+                customer_name=(lead.fields or {}).get("name"),
+                customer_phone=lead.phone,
+                service_request=(lead.fields or {}).get("service_request"),
+                requested_time_text=preference,
+                status="pending",
+            )
+        )
+        appointment_count += 1
 
     call_count = 0
     for index, hours_ago in enumerate((2, 28), start=1):
@@ -353,7 +387,7 @@ def _seed_activity(db, *, business_id: str) -> tuple[int, int, int]:
             )
         )
         conversation_count += 1
-    return lead_count, call_count, conversation_count
+    return lead_count, call_count, conversation_count, appointment_count
 
 
 def main() -> int:
@@ -381,7 +415,7 @@ def main() -> int:
             password=password,
         )
         _ensure_membership(db, business_id=business.id, user_id=user.id)
-        leads_added, calls_added, conversations_added = _seed_activity(
+        leads_added, calls_added, conversations_added, appointments_added = _seed_activity(
             db, business_id=business.id
         )
         record_audit_event(
@@ -395,6 +429,7 @@ def main() -> int:
                 "leads_added": leads_added,
                 "missed_calls_added": calls_added,
                 "conversations_added": conversations_added,
+                "appointments_added": appointments_added,
             },
         )
         db.commit()
@@ -408,6 +443,7 @@ def main() -> int:
     print(f"Local demo ready for {args.email.strip().lower()}.")
     print(f"Seeded {leads_added} new leads and {calls_added} new missed calls.")
     print(f"Seeded {conversations_added} stored conversation timelines.")
+    print(f"Seeded {appointments_added} appointment requests.")
     print(f"Open /login; the client account will route to /b/{LOCAL_CLIENT_BUSINESS_ID}.")
     return 0
 

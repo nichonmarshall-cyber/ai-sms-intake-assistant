@@ -28,6 +28,7 @@ tabs if they do not already exist.
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 """
 
+import json
 import os
 import logging
 from datetime import datetime, timezone
@@ -68,7 +69,10 @@ def _get_workbook():
             "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive.readonly",
         ]
-        creds = Credentials.from_service_account_file(creds_path, scopes=scopes)
+        if creds_path.startswith("{"):
+            creds = Credentials.from_service_account_info(json.loads(creds_path), scopes=scopes)
+        else:
+            creds = Credentials.from_service_account_file(creds_path, scopes=scopes)
         gc = gspread.authorize(creds)
         _workbook = gc.open_by_key(sheet_id)
         logger.info("[sheets] Connected to Google Sheets successfully.")

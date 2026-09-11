@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../../lib/api";
-import type { ConversationSummary, MissedCallEvent, Paged } from "../../lib/types";
+import type { AppointmentRequest, CalendarConnection, ConversationSummary, MissedCallEvent, Paged } from "../../lib/types";
 import { Badge, Card, EmptyState, ErrorState, Loading, Stat, useFocusOnMount } from "../../components";
 
 interface PlatformConversation extends ConversationSummary {
@@ -37,6 +37,16 @@ interface WebhooksPayload {
   metrics: { inbound_sms: number; voice_events: number; total_recent: number };
   items: WebhookItem[];
   notice: string;
+}
+
+interface PlatformAppointment extends AppointmentRequest {
+  business: { id: string; name: string; slug: string };
+}
+
+interface CalendarPayload {
+  metrics: { businesses: number; connected: number; pending: number; scheduled: number; sync_failed: number };
+  connections: { business: { id: string; name: string; slug: string }; connection: CalendarConnection }[];
+  items: PlatformAppointment[];
 }
 
 function formatDate(value: string | null): string {
@@ -144,6 +154,29 @@ export function DeliveryDiagnostics({ readOnly }: { readOnly: boolean }) {
             {data.items.map((item) => <tr key={item.id}><td data-label="Business">{item.business.name}</td><td data-label="Caller">{item.caller_phone}</td><td data-label="Decision">{humanize(item.decision)}</td><td data-label="Delivery status"><Badge tone={item.delivery_status === "delivered" ? "ok" : item.delivery_status === "failed" || item.delivery_status === "undelivered" ? "warn" : "demo"}>{humanize(item.delivery_status || "not_sent")}</Badge>{item.error_code && <small className="delivery-error-code">Error {item.error_code}</small>}</td><td data-label="Attempts">{item.send_attempts}</td><td data-label="When">{formatDate(item.created_at)}</td><td data-label="Action">{!readOnly && item.decision === "send_failed" ? <button className="btn" type="button" disabled={retrying === item.id} onClick={() => void retry(item)}>{retrying === item.id ? "Retrying…" : "Retry"}</button> : "—"}</td></tr>)}
           </tbody></table></div>}
         </Card>
+      </>}
+    </>
+  );
+}
+
+export function CalendarDiagnostics() {
+  const heading = useFocusOnMount<HTMLHeadingElement>();
+  const { data, error, loading, load } = useLiveData<CalendarPayload>("/api/admin/calendar");
+  return (
+    <>
+      <h1 className="page-title" tabIndex={-1} ref={heading}>Calendar</h1>
+      <p className="page-subtitle">Google Calendar connections and appointment sync across all tenants.</p>
+      {loading && <Loading rows={5} />}{error && <ErrorState body={error} />}
+      {data && <>
+        <div className="stat-grid"><Stat label="Connected calendars" value={data.metrics.connected} icon="▣" /><Stat label="Pending approval" value={data.metrics.pending} icon="◷" /><Stat label="Scheduled" value={data.metrics.scheduled} icon="✓" /><Stat label="Sync failures" value={data.metrics.sync_failed} icon="!" /></div>
+        <div className="admin-management-grid">
+          <Card title="Tenant connections">
+            <div className="management-list">{data.connections.map((row) => <div className="management-list__item calendar-connection-row" key={row.business.id}><span><strong>{row.business.name}</strong><small>{row.connection.calendar_name || row.connection.calendar_id || "No calendar selected"}</small></span><Badge tone={row.connection.connected ? "ok" : "warn"}>{row.connection.connected ? "Connected" : "Not connected"}</Badge><Link className="table__link" to={`/b/${row.business.id}/settings`}>Settings</Link></div>)}</div>
+          </Card>
+          <Card title="Recent appointment activity" action={<button className="btn" type="button" onClick={() => void load()}>Refresh</button>}>
+            {data.items.length === 0 ? <EmptyState title="No appointment activity" body="Tenant scheduling requests will appear here." /> : <div className="overview-list">{data.items.slice(0, 8).map((item) => <Link className="overview-list__item" to={`/b/${item.business.id}/appointments`} key={item.id}><span><strong>{item.customer_name || item.customer_phone}</strong><small>{item.business.name} · {item.service_request || "Service appointment"}</small></span><Badge tone={item.status === "scheduled" ? "ok" : item.status === "sync_failed" ? "warn" : "demo"}>{humanize(item.status)}</Badge></Link>)}</div>}
+          </Card>
+        </div>
       </>}
     </>
   );

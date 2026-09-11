@@ -8,10 +8,11 @@ from datetime import datetime, timedelta, timezone
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import Integer, String, cast, func, or_, select
 
-from modules import entitlements
+from modules import calendar_service, entitlements
 from modules.auth.decorators import require_business_access, require_module
-from modules.models import Business, ConversationSession, Lead, MissedCallEvent
+from modules.models import AppointmentRequest, Business, ConversationSession, Lead, MissedCallEvent
 from modules.serializers import (
+    appointment_dto,
     business_dto,
     conversation_detail_dto,
     conversation_summary_dto,
@@ -24,6 +25,7 @@ client_bp = Blueprint("client", __name__, url_prefix="/api/dashboard")
 
 LEAD_WORKFLOW_STATUSES = {"new", "qualified", "needs_review", "scheduled", "closed"}
 CONVERSATION_STATES = {"awaiting_profile_selection", "in_progress", "completed", "terminated"}
+APPOINTMENT_STATUSES = {"pending", "scheduled", "declined", "cancelled", "sync_failed"}
 MAX_PAGE_SIZE = 100
 
 
@@ -80,6 +82,14 @@ def overview(business_id: str):
             ConversationSession.state.in_({"awaiting_profile_selection", "in_progress"}),
         )
     ).scalar_one()
+    pending_appointments = g.db.execute(
+        select(func.count())
+        .select_from(AppointmentRequest)
+        .where(
+            AppointmentRequest.business_id == business_id,
+            AppointmentRequest.status.in_({"pending", "sync_failed"}),
+        )
+    ).scalar_one()
     recent_leads = list(
         g.db.execute(
             select(Lead)
@@ -109,6 +119,18 @@ def overview(business_id: str):
         for lead in all_leads
         if lead.created_at and lead.created_at.date() >= today - timedelta(days=6)
     )
+    appointment_requests = list(
+        g.db.execute(
+            select(AppointmentRequest)
+            .where(
+                AppointmentRequest.business_id == business_id,
+                AppointmentRequest.status.in_({"pending", "sync_failed"}),
+            )
+            .order_by(AppointmentRequest.created_at.desc(), AppointmentRequest.id.desc())
+            .limit(2)
+        ).scalars()
+    )
+    business = g.db.get(Business, business_id)
 
     return jsonify(
         {
@@ -117,9 +139,12 @@ def overview(business_id: str):
                 "new_leads": open_leads,
                 "open_conversations": open_conversations,
                 "missed_calls_handled": missed_calls,
+                "pending_approval": pending_appointments,
             },
             "recent_leads": [lead_dto(lead) for lead in recent_leads],
             "recent_conversations": [conversation_summary_dto(row) for row in recent_sessions],
+            "appointment_requests": [appointment_dto(row) for row in appointment_requests],
+            "calendar": calendar_service.connection_dto(business),
             "lead_sources": [
                 {"source": source, "count": count}
                 for source, count in sorted(source_counts.items(), key=lambda item: (-item[1], item[0]))
@@ -136,10 +161,198 @@ def overview(business_id: str):
                     "key": "response_rate",
                     "reason": "Requires provider delivery timestamps; message history alone cannot calculate it.",
                 },
-                {"key": "appointments", "reason": "Calendar scheduling is not connected yet."},
             ],
         }
     ), 200
+
+
+@client_bp.get("/businesses/<business_id>/appointments")
+@require_business_access()
+@require_module("appointments")
+def list_appointments(business_id: str):
+    status = (request.args.get("status") or "").strip().lower()
+    if status and status not in APPOINTMENT_STATUSES:
+        return jsonify({"error": "Invalid appointment status."}), 400
+    query = select(AppointmentRequest).where(AppointmentRequest.business_id == business_id)
+    if status:
+        query = query.where(AppointmentRequest.status == status)
+    rows = list(
+        g.db.execute(
+            query.order_by(
+                AppointmentRequest.scheduled_start_at.asc().nullslast(),
+                AppointmentRequest.created_at.desc(),
+            ).limit(100)
+        ).scalars()
+    )
+    business = g.db.get(Business, business_id)
+    return jsonify(
+        {
+            "items": [appointment_dto(row) for row in rows],
+            "connection": calendar_service.connection_dto(business),
+            "statuses": sorted(APPOINTMENT_STATUSES),
+        }
+    ), 200
+
+
+@client_bp.patch("/businesses/<business_id>/appointments/<int:appointment_id>")
+@require_business_access(write=True)
+@require_module("appointments")
+def update_appointment(business_id: str, appointment_id: int):
+    appointment = g.db.execute(
+        select(AppointmentRequest).where(
+            AppointmentRequest.id == appointment_id,
+            AppointmentRequest.business_id == business_id,
+        )
+    ).scalar_one_or_none()
+    if appointment is None:
+        return jsonify({"error": "Appointment request not found."}), 404
+    payload = request.get_json(silent=True) or {}
+    action = str(payload.get("action") or "").strip().lower()
+
+    if action == "decline":
+        if appointment.status == "scheduled":
+            return jsonify({"error": "A scheduled calendar event cannot be declined here."}), 409
+        appointment.status = "declined"
+        appointment.provider_error = None
+        record_audit_event(
+            g.db,
+            action="appointment.decline",
+            target_type="appointment_request",
+            target_id=str(appointment.id),
+            business_id=business_id,
+            actor_user_id=g.current_user.id,
+        )
+        g.db.commit()
+        return jsonify({"appointment": appointment_dto(appointment)}), 200
+
+    if action != "schedule":
+        return jsonify({"error": "Use action schedule or decline."}), 400
+    if appointment.status == "scheduled" and appointment.calendar_event_id:
+        return jsonify({"appointment": appointment_dto(appointment)}), 200
+
+    business = g.db.get(Business, business_id)
+    connection = calendar_service.calendar_settings(business)
+    if not connection["calendar_id"] or not connection["verified_at"]:
+        return jsonify({"error": "Connect and verify Google Calendar before scheduling."}), 409
+    try:
+        duration = int(payload.get("duration_minutes") or connection["default_duration_minutes"])
+    except (TypeError, ValueError):
+        return jsonify({"error": "Duration must be a number of minutes."}), 400
+    if duration < 15 or duration > 480:
+        return jsonify({"error": "Duration must be between 15 and 480 minutes."}), 400
+    try:
+        start = calendar_service.parse_local_start(
+            str(payload.get("scheduled_start") or ""), connection["timezone"]
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    if start < datetime.now(timezone.utc) - timedelta(minutes=5):
+        return jsonify({"error": "Choose a future appointment time."}), 400
+
+    appointment.scheduled_start_at = start
+    appointment.duration_minutes = duration
+    appointment.scheduled_by_user_id = g.current_user.id
+    appointment.provider_error = None
+    try:
+        result = calendar_service.create_event(
+            calendar_id=connection["calendar_id"],
+            timezone_name=connection["timezone"],
+            appointment=appointment,
+            business_name=business.name,
+        )
+    except (calendar_service.CalendarConfigurationError, calendar_service.CalendarProviderError) as exc:
+        appointment.status = "sync_failed"
+        appointment.provider_error = str(exc)[:255]
+        g.db.commit()
+        return jsonify({"error": str(exc), "appointment": appointment_dto(appointment)}), 502
+
+    appointment.status = "scheduled"
+    appointment.calendar_event_id = result.event_id
+    appointment.calendar_event_link = result.html_link
+    if appointment.lead_id:
+        lead = g.db.get(Lead, appointment.lead_id)
+        if lead is not None and lead.business_id == business_id:
+            lead.workflow_status = "scheduled"
+    record_audit_event(
+        g.db,
+        action="appointment.schedule",
+        target_type="appointment_request",
+        target_id=str(appointment.id),
+        business_id=business_id,
+        actor_user_id=g.current_user.id,
+        details={"calendar_event_id": result.event_id, "duration_minutes": duration},
+    )
+    g.db.commit()
+    return jsonify({"appointment": appointment_dto(appointment)}), 200
+
+
+@client_bp.post("/businesses/<business_id>/calendar/verify")
+@require_business_access(write=True)
+@require_module("appointments")
+def verify_calendar_connection(business_id: str):
+    business = g.db.get(Business, business_id)
+    if business is None:
+        return jsonify({"error": "Business not found."}), 404
+    payload = request.get_json(silent=True) or {}
+    calendar_id = str(payload.get("calendar_id") or "").strip()
+    if len(calendar_id) > 320:
+        return jsonify({"error": "Calendar ID must be 320 characters or fewer."}), 400
+    try:
+        timezone_name = calendar_service.validate_timezone(str(payload.get("timezone") or ""))
+        duration = int(payload.get("default_duration_minutes") or 60)
+        if duration < 15 or duration > 480:
+            raise ValueError("Default duration must be between 15 and 480 minutes.")
+        provider_calendar = calendar_service.verify_calendar(calendar_id)
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except (calendar_service.CalendarConfigurationError, calendar_service.CalendarProviderError) as exc:
+        return jsonify({"error": str(exc)}), 502
+
+    settings = dict(business.settings or {})
+    settings["calendar"] = {
+        "provider": "google",
+        "calendar_id": calendar_id,
+        "calendar_name": str(provider_calendar.get("summary") or calendar_id)[:160],
+        "timezone": timezone_name,
+        "verified_at": datetime.now(timezone.utc).isoformat(),
+        "default_duration_minutes": duration,
+    }
+    business.settings = settings
+    record_audit_event(
+        g.db,
+        action="calendar.verify",
+        target_type="business",
+        target_id=business_id,
+        business_id=business_id,
+        actor_user_id=g.current_user.id,
+        details={"calendar_name": settings["calendar"]["calendar_name"]},
+    )
+    g.db.commit()
+    return jsonify({"connection": calendar_service.connection_dto(business)}), 200
+
+
+@client_bp.post("/businesses/<business_id>/calendar/disconnect")
+@require_business_access(write=True)
+@require_module("appointments")
+def disconnect_calendar(business_id: str):
+    business = g.db.get(Business, business_id)
+    if business is None:
+        return jsonify({"error": "Business not found."}), 404
+    settings = dict(business.settings or {})
+    calendar = dict(settings.get("calendar") or {})
+    calendar.update({"calendar_id": "", "calendar_name": "", "verified_at": None})
+    settings["calendar"] = calendar
+    business.settings = settings
+    record_audit_event(
+        g.db,
+        action="calendar.disconnect",
+        target_type="business",
+        target_id=business_id,
+        business_id=business_id,
+        actor_user_id=g.current_user.id,
+    )
+    g.db.commit()
+    return jsonify({"connection": calendar_service.connection_dto(business)}), 200
 
 
 @client_bp.get("/businesses/<business_id>/leads")
@@ -436,7 +649,12 @@ def get_settings(business_id: str):
     business = g.db.get(Business, business_id)
     if business is None:
         return jsonify({"error": "Business not found."}), 404
-    return jsonify({"business": business_dto(business)}), 200
+    return jsonify(
+        {
+            "business": business_dto(business),
+            "calendar": calendar_service.connection_dto(business),
+        }
+    ), 200
 
 
 @client_bp.patch("/businesses/<business_id>/settings")

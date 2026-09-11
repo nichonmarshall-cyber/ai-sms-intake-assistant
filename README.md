@@ -21,6 +21,8 @@ When a customer texts in, the system:
 6. Optionally exports completed leads to Google Sheets (`SHEETS_ENABLED=true`)
 7. Can follow up on a conditionally forwarded missed call through a separate,
    feature-flagged Twilio Voice webhook
+8. Captures appointment preferences for tenant review and creates a real Google
+   Calendar event only after an authorized client user confirms the exact time
 
 ---
 
@@ -32,7 +34,7 @@ When a customer texts in, the system:
 | SMS | Twilio |
 | AI | OpenAI |
 | Persistent storage | PostgreSQL via SQLAlchemy + Alembic (SQLite for dev/tests) |
-| Lead export (optional) | Google Sheets |
+| Google integrations | Google Calendar scheduling + optional Sheets export |
 | Hosting | Render |
 
 ---
@@ -61,10 +63,32 @@ smsIntake_assistant/
     ├── db.py / models.py          # SQLAlchemy engine + ORM models
     ├── twilio_helper.py           # Signature validation + TwiML
     ├── missed_call.py             # Missed-call rules, idempotency, outbound SMS
+    ├── calendar_service.py         # Service-account Calendar verification + event creation
     ├── sheets_helper.py           # Optional Sheets export
     ├── business_hours.py          # Business-hours-aware greeting
     └── time_utils.py              # UTC storage -> America/Chicago display
 ```
+
+### Google Calendar connection
+
+The Calendar integration uses a Google service account so client credentials
+are never stored in tenant rows. In Google Cloud, enable the **Google Calendar
+API**, create a service-account JSON key, and configure
+`GOOGLE_SERVICE_ACCOUNT_JSON`. Locally this can be a file path; on Render it can
+be the complete JSON document stored as a secret environment value.
+
+For each client calendar:
+
+1. Share the Google Calendar with the service-account email and grant permission
+   to make changes to events.
+2. Open the client's dashboard, then **Settings → Google Calendar**.
+3. Enter the Calendar ID and IANA timezone, then select **Verify & connect**.
+4. Review pending requests under **Appointments**. Selecting **Approve &
+   schedule** creates the provider event and stores its Google event ID.
+
+Natural-language preferences such as “Friday morning” remain pending. The
+dashboard requires the business to choose an exact date and time, so intake
+never claims that a preference is a confirmed appointment.
 
 ---
 

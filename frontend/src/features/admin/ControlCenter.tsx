@@ -21,13 +21,14 @@ import {
   Stat,
   useFocusOnMount,
 } from "../../components";
-import { DeliveryDiagnostics, PlatformConversations, WebhookDiagnostics } from "./AdminDiagnostics";
+import { CalendarDiagnostics, DeliveryDiagnostics, PlatformConversations, WebhookDiagnostics } from "./AdminDiagnostics";
 
 interface OverviewPayload {
   active_businesses: number;
   leads: number;
   missed_calls: number;
   users: number;
+  calendar: { connected_businesses: number; pending_appointments: number; status: string };
   unavailable: UnavailableMetric[];
 }
 
@@ -92,6 +93,16 @@ function PlatformOverview() {
               ))}
             </ul>
           </Card>
+          <div className="settings-section">
+            <Card title="Calendar health">
+              <div className={data.calendar.status === "operational" ? "calendar-banner calendar-banner--ok" : "calendar-banner calendar-banner--warn"}>
+                <span>{data.calendar.status === "operational" ? "✓" : "!"}</span>
+                <strong>{data.calendar.status === "operational" ? "Google Calendar operational" : data.calendar.status === "degraded" ? "Google Calendar degraded" : "Google Calendar not configured"}</strong>
+                <span>{data.calendar.connected_businesses} connected · {data.calendar.pending_appointments} pending approval</span>
+                <Link className="table__link" to="/admin/calendar">View calendar operations</Link>
+              </div>
+            </Card>
+          </div>
         </>
       )}
     </>
@@ -664,6 +675,7 @@ export function ControlCenterRoutes({ readOnly }: { readOnly: boolean }) {
       <Route path="businesses/:businessId" element={<BusinessDetail readOnly={readOnly} />} />
       <Route path="conversations" element={<PlatformConversations />} />
       <Route path="delivery" element={<DeliveryDiagnostics readOnly={readOnly} />} />
+      <Route path="calendar" element={<CalendarDiagnostics />} />
       <Route path="webhooks" element={<WebhookDiagnostics />} />
       <Route path="audit" element={<AuditLog />} />
       <Route path="*" element={<EmptyState title="Page not found" body="That Control Center page does not exist." />} />

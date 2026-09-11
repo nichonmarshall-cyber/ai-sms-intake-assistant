@@ -80,6 +80,43 @@ export interface MissedCallEvent {
   created_at: string | null;
 }
 
+export interface CalendarConnection {
+  provider: "google";
+  calendar_id: string;
+  calendar_name: string;
+  timezone: string;
+  verified_at: string | null;
+  default_duration_minutes: number;
+  connected: boolean;
+  credentials_configured: boolean;
+  service_account_email: string | null;
+}
+
+export type AppointmentStatus =
+  | "pending"
+  | "scheduled"
+  | "declined"
+  | "cancelled"
+  | "sync_failed";
+
+export interface AppointmentRequest {
+  id: number;
+  business_id: string;
+  lead_id: number | null;
+  customer_name: string | null;
+  customer_phone: string;
+  service_request: string | null;
+  requested_time_text: string | null;
+  scheduled_start_at: string | null;
+  duration_minutes: number;
+  status: AppointmentStatus;
+  calendar_event_id: string | null;
+  calendar_event_link: string | null;
+  provider_error: string | null;
+  created_at: string | null;
+  updated_at: string | null;
+}
+
 export interface Membership {
   id: number;
   business_id: string;

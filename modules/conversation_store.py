@@ -309,6 +309,14 @@ def record_lead(
     db.add(lead)
     db.commit()
     db.refresh(lead)
+    try:
+        from modules.calendar_service import ensure_request_for_lead
+
+        ensure_request_for_lead(db, lead)
+    except Exception:
+        # Appointment projection must never lose a captured lead or break the
+        # Twilio response path. The lead remains available for manual follow-up.
+        logger.exception("[calendar] Could not create appointment request for lead %s", lead.id)
     return lead
 
 

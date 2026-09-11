@@ -75,6 +75,26 @@ def missed_call_dto(event) -> dict:
     }
 
 
+def appointment_dto(appointment) -> dict:
+    return {
+        "id": appointment.id,
+        "business_id": appointment.business_id,
+        "lead_id": appointment.lead_id,
+        "customer_name": appointment.customer_name,
+        "customer_phone": appointment.customer_phone,
+        "service_request": appointment.service_request,
+        "requested_time_text": appointment.requested_time_text,
+        "scheduled_start_at": _iso(appointment.scheduled_start_at),
+        "duration_minutes": appointment.duration_minutes,
+        "status": appointment.status,
+        "calendar_event_id": appointment.calendar_event_id,
+        "calendar_event_link": appointment.calendar_event_link,
+        "provider_error": appointment.provider_error,
+        "created_at": _iso(appointment.created_at),
+        "updated_at": _iso(appointment.updated_at),
+    }
+
+
 def membership_dto(membership, *, user=None) -> dict:
     payload = {
         "id": membership.id,

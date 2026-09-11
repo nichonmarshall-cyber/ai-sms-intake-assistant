@@ -32,6 +32,7 @@ MODULE_REGISTRY: tuple[ModuleSpec, ...] = (
     ModuleSpec("overview", "Overview", "home", True, "Business performance at a glance."),
     ModuleSpec("leads", "Leads", "users", True, "Search, review, and manage captured leads."),
     ModuleSpec("conversations", "Conversations", "message-square", True, "Review stored SMS intake timelines."),
+    ModuleSpec("appointments", "Appointments", "calendar", True, "Review and schedule appointment requests."),
     ModuleSpec("ai_intake", "AI Intake", "cpu", True, "Monitor intake outcomes and missed-call follow-up."),
     ModuleSpec("website", "Website", "globe", False, "Requires a monitoring provider."),
     ModuleSpec("local_seo", "Local SEO", "search", False, "Requires Google Search Console."),
@@ -48,7 +49,14 @@ MODULE_KEYS = tuple(spec.key for spec in MODULE_REGISTRY)
 MODULES_BY_KEY = {spec.key: spec for spec in MODULE_REGISTRY}
 
 # Every business starts with the modules Phase 1a and Phase 2 actually cover.
-DEFAULT_ENABLED_MODULES = ("overview", "leads", "conversations", "ai_intake", "settings")
+DEFAULT_ENABLED_MODULES = (
+    "overview",
+    "leads",
+    "conversations",
+    "appointments",
+    "ai_intake",
+    "settings",
+)
 
 
 def is_valid_module(module_key: str) -> bool:
