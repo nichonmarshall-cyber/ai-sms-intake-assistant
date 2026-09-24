@@ -921,6 +921,152 @@
   margin-top: 4px;
 }
 
+/* Operational analytics -------------------------------------------------- */
+.analytics-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-5);
+}
+.analytics-range {
+  display: flex;
+  gap: var(--space-2);
+}
+.analytics-range .btn {
+  white-space: nowrap;
+}
+.analytics-period {
+  color: var(--ntx-muted);
+  font-size: 12px;
+  margin: calc(-1 * var(--space-4)) 0 var(--space-4);
+}
+.analytics-stat-grid {
+  grid-template-columns: repeat(3, minmax(190px, 1fr));
+}
+.analytics-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-4);
+  margin-top: var(--space-4);
+}
+.analytics-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin-bottom: var(--space-4);
+  color: var(--ntx-muted);
+  font-size: 11px;
+}
+.analytics-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.analytics-legend i {
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+}
+.analytics-legend__lead { background: var(--ntx-orange-light); }
+.analytics-legend__appointment { background: var(--ntx-green); }
+.analytics-legend__missed { background: var(--ntx-amber); }
+.analytics-chart-scroll {
+  overflow-x: auto;
+  padding-bottom: var(--space-2);
+}
+.analytics-chart {
+  height: 250px;
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  padding-top: var(--space-2);
+  border-bottom: 1px solid var(--ntx-border-strong);
+}
+.analytics-chart__day {
+  min-width: 18px;
+  flex: 1;
+  display: grid;
+  grid-template-rows: 210px 24px;
+  gap: var(--space-2);
+  text-align: center;
+}
+.analytics-chart__bars {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 2px;
+  min-height: 0;
+  background: linear-gradient(to top, var(--ntx-border) 1px, transparent 1px);
+  background-size: 100% 25%;
+}
+.analytics-chart__bar {
+  display: block;
+  width: 28%;
+  min-height: 2px;
+  max-width: 8px;
+  border-radius: 3px 3px 0 0;
+}
+.analytics-chart__bar--lead { background: var(--ntx-orange-light); }
+.analytics-chart__bar--appointment { background: var(--ntx-green); }
+.analytics-chart__bar--missed { background: var(--ntx-amber); }
+.analytics-chart__day small {
+  color: var(--ntx-muted);
+  font-size: 9px;
+  white-space: nowrap;
+}
+.analytics-breakdown {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+.analytics-breakdown__label {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: 6px;
+  color: var(--ntx-body);
+  font-size: 12px;
+}
+.analytics-breakdown__label strong {
+  color: var(--ntx-white);
+}
+.analytics-breakdown__track {
+  height: 5px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--ntx-black);
+}
+.analytics-breakdown__track span {
+  display: block;
+  height: 100%;
+  min-width: 3px;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--ntx-orange), var(--ntx-orange-light));
+}
+.analytics-note {
+  margin-top: var(--space-4);
+}
+
+@media (max-width: 1000px) {
+  .analytics-grid,
+  .analytics-stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .analytics-heading {
+    display: block;
+  }
+  .analytics-range {
+    margin: calc(-1 * var(--space-3)) 0 var(--space-5);
+  }
+  .analytics-grid,
+  .analytics-stat-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 /* Appointments and calendar --------------------------------------------- */
 .appointment-stat-grid {
   grid-template-columns: repeat(3, minmax(190px, 1fr));
