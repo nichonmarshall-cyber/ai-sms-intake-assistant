@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import Integer, String, cast, func, or_, select
@@ -164,6 +165,152 @@ def overview(business_id: str):
             ],
         }
     ), 200
+
+
+def _analytics_days() -> int:
+    try:
+        days = int(request.args.get("days", 30))
+    except (TypeError, ValueError):
+        days = 30
+    return days if days in {7, 30, 90} else 30
+
+
+def _aware_utc(value: datetime) -> datetime:
+    return (
+        value.replace(tzinfo=timezone.utc)
+        if value.tzinfo is None
+        else value.astimezone(timezone.utc)
+    )
+
+
+@client_bp.get("/businesses/<business_id>/analytics")
+@require_business_access()
+@require_module("analytics")
+def analytics(business_id: str):
+    """Tenant-scoped operational analytics from data the platform owns."""
+    business = g.db.get(Business, business_id)
+    if business is None:
+        return jsonify({"error": "Business not found."}), 404
+
+    days = _analytics_days()
+    timezone_name = calendar_service.calendar_settings(business)["timezone"]
+    try:
+        local_zone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        timezone_name = "America/Chicago"
+        local_zone = ZoneInfo(timezone_name)
+
+    now_local = datetime.now(timezone.utc).astimezone(local_zone)
+    end_date = now_local.date()
+    start_date = end_date - timedelta(days=days - 1)
+    start_utc = datetime.combine(
+        start_date, datetime.min.time(), tzinfo=local_zone
+    ).astimezone(timezone.utc)
+    end_utc = datetime.combine(
+        end_date + timedelta(days=1), datetime.min.time(), tzinfo=local_zone
+    ).astimezone(timezone.utc)
+
+    leads = list(
+        g.db.execute(
+            select(Lead).where(
+                Lead.business_id == business_id,
+                Lead.created_at >= start_utc,
+                Lead.created_at < end_utc,
+            )
+        ).scalars()
+    )
+    conversations = list(
+        g.db.execute(
+            select(ConversationSession).where(
+                ConversationSession.business_id == business_id,
+                ConversationSession.created_at >= start_utc,
+                ConversationSession.created_at < end_utc,
+            )
+        ).scalars()
+    )
+    appointments = list(
+        g.db.execute(
+            select(AppointmentRequest).where(
+                AppointmentRequest.business_id == business_id,
+                AppointmentRequest.created_at >= start_utc,
+                AppointmentRequest.created_at < end_utc,
+            )
+        ).scalars()
+    )
+    missed_calls = list(
+        g.db.execute(
+            select(MissedCallEvent).where(
+                MissedCallEvent.business_id == business_id,
+                MissedCallEvent.created_at >= start_utc,
+                MissedCallEvent.created_at < end_utc,
+            )
+        ).scalars()
+    )
+
+    dates = [start_date + timedelta(days=offset) for offset in range(days)]
+    lead_daily = Counter(_aware_utc(row.created_at).astimezone(local_zone).date() for row in leads)
+    appointment_daily = Counter(
+        _aware_utc(row.created_at).astimezone(local_zone).date()
+        for row in appointments
+    )
+    missed_daily = Counter(
+        _aware_utc(row.created_at).astimezone(local_zone).date()
+        for row in missed_calls
+    )
+    sources = Counter(
+        str((row.fields or {}).get("source") or "Direct SMS").strip() or "Direct SMS"
+        for row in leads
+    )
+    profiles = Counter(
+        (row.profile_key or "Unassigned").strip() or "Unassigned" for row in leads
+    )
+    workflow = Counter((row.workflow_status or "new").strip() or "new" for row in leads)
+    completed = sum(1 for row in leads if row.is_complete)
+    scheduled = sum(1 for row in appointments if row.status == "scheduled")
+    followups_sent = sum(
+        1 for row in missed_calls if row.decision in {"sent", "message_sent"}
+    )
+
+    return jsonify({
+        "period": {
+            "days": days,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "timezone": timezone_name,
+        },
+        "metrics": {
+            "leads": len(leads),
+            "completed_intakes": completed,
+            "completion_rate": round((completed / len(leads)) * 100, 1) if leads else 0.0,
+            "conversations": len(conversations),
+            "appointment_requests": len(appointments),
+            "scheduled_appointments": scheduled,
+            "schedule_rate": round((scheduled / len(appointments)) * 100, 1) if appointments else 0.0,
+            "missed_calls": len(missed_calls),
+            "followups_sent": followups_sent,
+        },
+        "activity": [
+            {
+                "date": day.isoformat(),
+                "leads": lead_daily[day],
+                "appointments": appointment_daily[day],
+                "missed_calls": missed_daily[day],
+            }
+            for day in dates
+        ],
+        "lead_sources": [
+            {"key": key, "count": count}
+            for key, count in sorted(sources.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        "service_profiles": [
+            {"key": key, "count": count}
+            for key, count in sorted(profiles.items(), key=lambda item: (-item[1], item[0]))
+        ],
+        "workflow_statuses": [
+            {"key": key, "count": count}
+            for key, count in sorted(workflow.items(), key=lambda item: (-item[1], item[0]))
+        ],
+    }), 200
 
 
 @client_bp.get("/businesses/<business_id>/appointments")
