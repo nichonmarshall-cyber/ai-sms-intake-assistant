@@ -103,8 +103,9 @@ def test_unimplemented_modules_are_flagged_not_faked(demo_app):
         "conversations",
         "appointments",
         "ai_intake",
+        "analytics",
         "settings",
     }
 
-    for key in ("website", "local_seo", "analytics", "reviews", "campaigns", "coupons"):
+    for key in ("website", "local_seo", "reviews", "campaigns", "coupons"):
         assert entitlements.MODULES_BY_KEY[key].implemented is False
