@@ -86,6 +86,18 @@ def require_auth(view):
 
             session_row, user = loaded
 
+            allowed_during_password_change = {
+                "/api/auth/me",
+                "/api/auth/change-password",
+                "/api/auth/logout",
+            }
+            if user.must_change_password and request.path not in allowed_during_password_change:
+                return _json_error(
+                    "You must change your temporary password before continuing.",
+                    403,
+                    code="password_change_required",
+                )
+
             if not is_exempt(request.path, request.method):
                 presented = request.headers.get(CSRF_HEADER, "")
                 if not sessions.verify_csrf(session_row, presented):

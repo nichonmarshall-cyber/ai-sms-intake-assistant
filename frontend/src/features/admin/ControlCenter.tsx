@@ -546,6 +546,20 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
                   <button
                     type="button"
                     className="btn"
+                    disabled={readOnly || saving === `reset-${membership.user_id}`}
+                    onClick={() => {
+                      const temporary = window.prompt("Enter a temporary password (12+ characters). The client will have to replace it at sign-in.");
+                      if (!temporary) return;
+                      void runAction(`reset-${membership.user_id}`, async () => {
+                        await api.post(`/api/admin/users/${membership.user_id}/reset-password`, { password: temporary });
+                      });
+                    }}
+                  >
+                    Reset password
+                  </button>
+                  <button
+                    type="button"
+                    className="btn"
                     disabled={readOnly || saving === `remove-${membership.id}`}
                     onClick={() => {
                       if (!window.confirm("Remove this user's access to the tenant?")) return;
@@ -611,6 +625,7 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
               </select>
             </Field>
             <button className="btn btn--primary" disabled={saving === "create-user"}>Create and grant access</button>
+            <p className="form-hint">The temporary password must be replaced before this user can open dashboard data.</p>
           </form>
         </Card>}
       </div>

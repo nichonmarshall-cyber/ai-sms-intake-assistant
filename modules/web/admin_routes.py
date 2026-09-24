@@ -11,7 +11,7 @@ from sqlalchemy import String, cast, func, or_, select
 
 from modules import calendar_service, entitlements, missed_call as missed_call_service
 from modules.auth import passwords, sessions
-from modules.auth.decorators import require_platform_admin, require_platform_operator
+from modules.auth.decorators import platform_role, require_platform_admin, require_platform_operator
 from modules.conversation_store import normalize_phone
 from modules.models import (
     AuditEvent,
@@ -396,6 +396,7 @@ def create_user():
         platform_role=role,
         is_platform_admin=(role == "admin"),
         is_active=True,
+        must_change_password=(role == "none"),
     )
     g.db.add(user)
     g.db.flush()
@@ -410,6 +411,38 @@ def create_user():
     )
     g.db.commit()
     return jsonify(user_dto(user)), 201
+
+
+@admin_bp.post("/users/<user_id>/reset-password")
+@require_platform_admin
+def reset_user_password(user_id: str):
+    user = g.db.get(PlatformUser, user_id)
+    if user is None:
+        return jsonify({"error": "User not found."}), 404
+    if platform_role(user) != "none":
+        return jsonify({"error": "Only client user passwords can be reset here."}), 400
+
+    payload = request.get_json(silent=True) or {}
+    new_password = payload.get("password") or ""
+    strength_error = passwords.validate_password_strength(new_password)
+    if strength_error:
+        return jsonify({"error": "Validation failed.", "fields": {"password": strength_error}}), 400
+    if passwords.verify_password(user.password_hash, new_password):
+        return jsonify({"error": "Choose a different temporary password."}), 400
+
+    user.password_hash = passwords.hash_password(new_password)
+    user.must_change_password = True
+    record_audit_event(
+        g.db,
+        action="user.password.reset",
+        target_type="platform_user",
+        target_id=user.id,
+        actor_user_id=g.current_user.id,
+        details={"email": user.email},
+    )
+    g.db.commit()
+    sessions.revoke_all_for_user(g.db, user.id)
+    return jsonify(user_dto(user)), 200
 
 
 @admin_bp.post("/businesses/<business_id>/memberships")

@@ -249,6 +249,9 @@ class PlatformUser(Base):
     # remains for backward compatibility until a later phase drops it.
     platform_role: Mapped[str] = mapped_column(String(16), nullable=False, default="none")
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # Client accounts created with a temporary password cannot reach dashboard
+    # data until they replace it. Platform admins created by the CLI opt out.
+    must_change_password: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
@@ -346,6 +349,28 @@ class LoginAttempt(Base):
     ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     success: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+
+
+class PasswordResetToken(Base):
+    """One-time password reset token; only the SHA-256 digest is persisted."""
+
+    __tablename__ = "password_reset_tokens"
+    __table_args__ = (
+        UniqueConstraint("token_hash", name="uq_password_reset_tokens_token_hash"),
+        Index("ix_password_reset_tokens_user_created", "user_id", "created_at"),
+        Index("ix_password_reset_tokens_expires_at", "expires_at"),
+        Index("ix_password_reset_tokens_ip_created", "ip_hash", "created_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        ForeignKey("platform_users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    token_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    ip_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class BusinessModule(Base):

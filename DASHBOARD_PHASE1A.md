@@ -65,15 +65,17 @@ The platform service-account credential is configured only through
 `GOOGLE_SERVICE_ACCOUNT_JSON`; business settings store only the calendar ID,
 timezone, display name, and verification timestamp.
 
-## What is deliberately NOT deployed
+## Production deployment
 
-Render deployment behavior is unchanged apart from the safe retry-count default.
-It still runs `pip install -r requirements.txt` and has no Node toolchain, so it
-cannot build the React bundle. `static/dist` is
-gitignored and not committed. On Render the dashboard routes therefore return a
-controlled **503**, while `/sms`, `/voice/missed-call`, `/health`, and `/reset`
-continue to work exactly as before. Wiring the build into Render is the first
-item of Phase 1b.
+Render builds the React bundle in the Node stage of `Dockerfile`, then copies it
+into the Python runtime image at `static/dist`. Flask serves dashboard and API
+from one origin while `/sms`, `/voice/missed-call`, `/health`, and `/reset`
+remain unchanged.
+
+Client users created with a temporary password must replace it before any
+dashboard data endpoint is available. Recovery links expire after 30 minutes,
+work once, and are stored only as hashes. Configure SMTP and `PUBLIC_BASE_URL`
+in Render to enable recovery email; see `DEPLOY.md`.
 
 ## Local setup
 

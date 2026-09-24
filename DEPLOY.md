@@ -1,31 +1,28 @@
 # Deployment Guide -- Render + Twilio
 
-This project has no Render account or Twilio account connected to this
-environment, so deployment could not be executed automatically. Everything
-below is the exact manual procedure using the code and config already
-committed on the `demo-platform` branch (`render.yaml`, `requirements.txt`,
-`migrations/`, `.env.example`).
+The dashboard, API, and Twilio webhooks deploy as one Docker-based Render web
+service. The Docker build compiles React and runs Flask/Gunicorn from the same
+origin. The target dashboard hostname is `app.ntxautomationco.com`.
 
 ## 1. Push the branch
 
 ```bash
-git push -u origin demo-platform
+git push -u origin feat/multitenant-platform-foundation
 ```
 
 ## 2. Create the Render Blueprint
 
 1. Go to https://dashboard.render.com -> **New** -> **Blueprint**.
-2. Connect the `nichonmarshall-cyber/ai-sms-intake-assistant` repo, branch `demo-platform`.
+2. Connect the repository branch `feat/multitenant-platform-foundation`.
 3. Render reads `render.yaml` and proposes:
    - A **PostgreSQL** database: `ntx-sms-intake-db`
-   - A **web service**: `ntx-sms-intake-assistant` (Python, Gunicorn, `/health` health check)
+   - A **web service**: `ntx-sms-intake-assistant` (Docker, React + Gunicorn, `/health` health check)
 4. Click **Apply**.
 
 `render.yaml` already wires `DATABASE_URL` to the database's internal
 connection string automatically (`fromDatabase`). Because Render's free web
-tier does not support `preDeployCommand`, the service runs
-`alembic upgrade head` at the beginning of `startCommand`, immediately before
-Gunicorn starts.
+tier does not support `preDeployCommand`, the Docker command runs
+`alembic upgrade head` immediately before Gunicorn starts.
 
 ## 3. Set the secret environment variables
 
@@ -38,9 +35,20 @@ values in the Render dashboard under the web service's **Environment** tab:
 | `TWILIO_ACCOUNT_SID` | your Twilio account SID |
 | `TWILIO_AUTH_TOKEN` | your Twilio auth token |
 | `TWILIO_MESSAGING_SERVICE_SID` | your Twilio Messaging Service SID (if using one) |
-| `PUBLIC_BASE_URL` | `https://ntx-sms-intake-assistant.onrender.com` (or your actual Render URL once assigned) |
+| `PUBLIC_BASE_URL` | The Render URL initially; `https://app.ntxautomationco.com` after domain verification |
 | `MISSED_CALL_ALLOWLIST` | Your test numbers, comma-separated E.164 values; leave the feature disabled until verification |
 | `MISSED_CALL_BLOCKLIST` | Optional numbers that must never receive an automated missed-call text |
+
+Password recovery email is strongly recommended before inviting a client:
+
+| Variable | Value |
+|---|---|
+| `SMTP_HOST` | SMTP host supplied by the email provider |
+| `SMTP_PORT` | Usually `587` |
+| `SMTP_USERNAME` | Provider SMTP username |
+| `SMTP_PASSWORD` | Provider SMTP password or credential |
+| `SMTP_FROM_EMAIL` | A verified sender such as `dashboard@ntxautomationco.com` |
+| `SMTP_USE_TLS` | `true` |
 
 Optional, only if enabling Sheets export:
 
@@ -65,7 +73,7 @@ enabled while `FLASK_ENV=production`.
 
 ## 4. Deploy and verify
 
-1. Render builds and deploys automatically after Apply / on every push to `demo-platform`.
+1. Render builds and deploys automatically after Apply / on every push to the configured branch.
 2. Confirm the health check:
    ```bash
    curl https://<your-render-url>.onrender.com/health
@@ -85,8 +93,21 @@ enabled while `FLASK_ENV=production`.
 5. Confirm the migration ran: the startup log should show
    `alembic upgrade head` completing before Gunicorn starts, and the first `/sms`
    request should succeed (a missing table would surface as a 500).
+6. Open the Render URL. Create a client user and confirm its temporary password
+   redirects to **Replace your temporary password** before tenant data appears.
 
-## 5. Only after the server is verified healthy: point Twilio at it
+## 5. Add `app.ntxautomationco.com`
+
+1. In the Render web service, open **Settings → Custom Domains → Add Custom Domain**.
+2. Enter `app.ntxautomationco.com`.
+3. At the DNS provider for `ntxautomationco.com`, create the CNAME target Render
+   displays. Remove any conflicting A, AAAA, or CNAME record for the `app` host.
+4. Wait for Render to verify the domain and issue TLS.
+5. Set `PUBLIC_BASE_URL=https://app.ntxautomationco.com` and redeploy.
+6. Verify `/health`, dashboard sign-in, password recovery, and Google Calendar
+   before changing any Twilio webhook.
+
+## 6. Only after the server is verified healthy: point Twilio at it
 
 **Do not change the existing Twilio webhook until step 4 above is fully
 green.** The current NTX 817 demo number's existing webhook (if any) stays
@@ -104,7 +125,7 @@ Where to set it:
 
 Save. Send a real text to the 817 number and confirm the menu arrives.
 
-## 6. Add missed-call forwarding only after SMS is verified
+## 7. Add missed-call forwarding only after SMS is verified
 
 The deployed app exposes a separate Voice webhook:
 
@@ -135,7 +156,7 @@ For a real client, use that client's dedicated Twilio number, set their
 conditional forwarding destination to it, remove the temporary allowlist only
 after the test succeeds, and change the cooldown to `1440`.
 
-## 7. Post-cutover acceptance check
+## 8. Post-cutover acceptance check
 
 Walk the full acceptance test from the project brief against the live
 number: menu -> pick an industry -> complete intake -> demo disclaimer ->

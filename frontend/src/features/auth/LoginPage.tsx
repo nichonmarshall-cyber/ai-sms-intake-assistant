@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Navigate } from "react-router-dom";
+import { Link, Navigate, useSearchParams } from "react-router-dom";
 import { ApiError } from "../../lib/api";
 import { useAuth } from "../../lib/auth";
 import { Field, Loading } from "../../components";
@@ -10,6 +10,7 @@ export function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [params] = useSearchParams();
 
   if (loading) {
     return (
@@ -20,7 +21,7 @@ export function LoginPage() {
       </div>
     );
   }
-  if (me) return <Navigate to="/" replace />;
+  if (me) return <Navigate to={me.user.requires_credential_change ? "/change-password" : "/"} replace />;
 
   const onSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -78,10 +79,14 @@ export function LoginPage() {
             {error}
           </p>
         )}
+        {(params.get("reset") === "complete" || params.get("changed") === "complete") && (
+          <p className="auth-success" role="status">Your password was updated. Sign in with the new password.</p>
+        )}
 
         <button type="submit" className="btn btn--primary" style={{ width: "100%" }} disabled={submitting}>
           {submitting ? "Signing in…" : "Sign in"}
         </button>
+        <Link className="auth-link" to="/forgot-password">Forgot your password?</Link>
       </form>
     </div>
   );

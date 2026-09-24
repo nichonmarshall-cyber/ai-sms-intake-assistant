@@ -22,6 +22,7 @@ def user_dto(user) -> dict:
         "display_name": user.display_name,
         "platform_role": platform_role(user),
         "is_active": user.is_active,
+        "requires_credential_change": bool(user.must_change_password),
         "created_at": _iso(user.created_at),
     }
 

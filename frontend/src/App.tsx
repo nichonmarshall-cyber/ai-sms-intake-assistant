@@ -7,14 +7,16 @@ import { AppShell } from "./components/AppShell";
 import type { NavSection } from "./components/AppShell";
 import { ErrorState, Loading } from "./components";
 import { LoginPage } from "./features/auth/LoginPage";
+import { ChangePasswordPage, ForgotPasswordPage, ResetPasswordPage } from "./features/auth/PasswordPages";
 import { ControlCenterRoutes } from "./features/admin/ControlCenter";
 import { ClientDashboardRoutes } from "./features/client/ClientDashboard";
 
 /** Gate: unauthenticated users never render an app screen at all. */
-function RequireAuth({ children }: { children: React.ReactNode }) {
+function RequireAuth({ children, allowPasswordChange = false }: { children: React.ReactNode; allowPasswordChange?: boolean }) {
   const { me, loading } = useAuth();
   if (loading) return <Loading rows={4} label="Checking your session" />;
   if (!me) return <Navigate to="/login" replace />;
+  if (me.user.requires_credential_change && !allowPasswordChange) return <Navigate to="/change-password" replace />;
   return <>{children}</>;
 }
 
@@ -147,6 +149,9 @@ export default function App() {
   return (
     <Routes>
       <Route path="/login" element={<LoginPage />} />
+      <Route path="/forgot-password" element={<ForgotPasswordPage />} />
+      <Route path="/reset-password" element={<ResetPasswordPage />} />
+      <Route path="/change-password" element={<RequireAuth allowPasswordChange><ChangePasswordPage /></RequireAuth>} />
       <Route
         path="/admin/*"
         element={

@@ -6,6 +6,7 @@ export interface User {
   display_name: string | null;
   platform_role: PlatformRole;
   is_active: boolean;
+  requires_credential_change: boolean;
   created_at: string | null;
 }
 

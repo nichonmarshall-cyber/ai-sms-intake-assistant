@@ -43,6 +43,10 @@ _OPTIONAL_KEYS = (
     "PUBLIC_BASE_URL",
     "TENANT_ROUTING_ENABLED",
     "MISSED_CALL_MAX_SEND_ATTEMPTS",
+    "SMTP_HOST",
+    "SMTP_FROM_EMAIL",
+    "SMTP_USERNAME",
+    "SMTP_PASSWORD",
 )
 
 
@@ -127,6 +131,7 @@ def make_platform_user(
     password: str = "correct-horse-battery-staple",
     platform_role: str = "admin",
     is_active: bool = True,
+    must_change_password: bool = False,
 ):
     """Creates a dashboard user directly in the test database."""
     from modules.auth import passwords
@@ -143,6 +148,7 @@ def make_platform_user(
             platform_role=platform_role,
             is_platform_admin=(platform_role == "admin"),
             is_active=is_active,
+            must_change_password=must_change_password,
         )
         db.add(user)
         db.commit()
