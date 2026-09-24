@@ -37,7 +37,7 @@ MODULE_REGISTRY: tuple[ModuleSpec, ...] = (
     ModuleSpec("website", "Website", "globe", False, "Requires a monitoring provider."),
     ModuleSpec("local_seo", "Local SEO", "search", False, "Requires Google Search Console."),
     ModuleSpec("reviews", "Reviews", "star", False, "Requires Google Business Profile."),
-    ModuleSpec("analytics", "Analytics", "bar-chart", False, "Requires Google Analytics."),
+    ModuleSpec("analytics", "Analytics", "bar-chart", True, "Lead, intake, appointment, and missed-call trends."),
     ModuleSpec("campaigns", "Campaigns", "send", False, "Arrives with the campaign queue in Phase 4."),
     ModuleSpec("contacts", "Contacts", "book", False, "Arrives with the restaurant CRM in Phase 4."),
     ModuleSpec("qr_sources", "QR Sources", "grid", False, "Arrives with the restaurant CRM in Phase 4."),
@@ -55,6 +55,7 @@ DEFAULT_ENABLED_MODULES = (
     "conversations",
     "appointments",
     "ai_intake",
+    "analytics",
     "settings",
 )
 
