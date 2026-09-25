@@ -32,6 +32,7 @@ function ControlCenter() {
       items: [
         { to: "/admin", label: "Control Center", icon: "◉" },
         { to: "/admin/businesses", label: "Businesses", icon: "▦" },
+        { to: "/admin/analytics", label: "Analytics", icon: "▤" },
         { to: "/admin/conversations", label: "Conversations", icon: "◍" },
         { to: "/admin/delivery", label: "Delivery", icon: "◎" },
         { to: "/admin/calendar", label: "Calendar", icon: "▣" },
@@ -103,7 +104,13 @@ function ClientWorkspace() {
   ];
 
   return (
-    <AppShell sections={sections} contextLabel={`Good afternoon, ${businessName}`}>
+    <AppShell
+      sections={sections}
+      contextLabel={`Client view · ${businessName}`}
+      modeSwitch={me?.user.platform_role === "admin"
+        ? { label: "Return to admin", to: `/admin/businesses/${businessId}` }
+        : undefined}
+    >
       <ClientDashboardRoutes modules={modules} readOnly={readOnly} />
     </AppShell>
   );

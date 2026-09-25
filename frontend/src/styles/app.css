@@ -107,6 +107,10 @@
   font-size: 13px;
   color: var(--ntx-body);
 }
+.mode-switch {
+  border-color: var(--ntx-orange-border);
+  color: var(--ntx-orange-light);
+}
 
 .content {
   padding: var(--space-6) var(--space-5);
@@ -122,6 +126,23 @@
 .page-subtitle {
   color: var(--ntx-muted);
   margin: var(--space-1) 0 var(--space-6);
+}
+.page-heading-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-4);
+}
+.page-heading-actions__buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+.business-analytics__badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 7px;
 }
 
 /* Cards ------------------------------------------------------------------- */
@@ -1064,6 +1085,10 @@
   .analytics-grid,
   .analytics-stat-grid {
     grid-template-columns: 1fr;
+  }
+  .page-heading-actions {
+    align-items: flex-start;
+    flex-direction: column;
   }
 }
 

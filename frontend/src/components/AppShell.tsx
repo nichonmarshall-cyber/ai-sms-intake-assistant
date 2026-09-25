@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
+import { Link, NavLink, useNavigate } from "react-router-dom";
 import type { ReactNode } from "react";
 import { useAuth } from "../lib/auth";
 
@@ -19,10 +19,12 @@ export interface NavSection {
 export function AppShell({
   sections,
   contextLabel,
+  modeSwitch,
   children,
 }: {
   sections: NavSection[];
   contextLabel: string;
+  modeSwitch?: { label: string; to: string };
   children: ReactNode;
 }) {
   const { me, logout } = useAuth();
@@ -125,6 +127,12 @@ export function AppShell({
           </button>
           <strong style={{ fontSize: 13 }}>{contextLabel}</strong>
           <div className="topbar__spacer" />
+          {modeSwitch && (
+            <Link className="btn mode-switch" to={modeSwitch.to}>
+              <span aria-hidden="true">⇄</span>
+              {modeSwitch.label}
+            </Link>
+          )}
           <div className="topbar__user">
             <span>{me?.user.display_name ?? me?.user.email}</span>
             <button type="button" className="btn" onClick={handleLogout}>

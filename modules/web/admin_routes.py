@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import String, cast, func, or_, select
@@ -52,6 +55,27 @@ VALID_PLATFORM_ROLES = {"none", "staff", "admin"}
 MAX_PAGE_SIZE = 100
 
 
+def _analytics_days() -> int:
+    try:
+        days = int(request.args.get("days", 30))
+    except (TypeError, ValueError):
+        days = 30
+    return days if days in {7, 30, 90} else 30
+
+
+def _count_by_business(model, start_utc: datetime, end_utc: datetime, *extra_filters):
+    rows = g.db.execute(
+        select(model.business_id, func.count())
+        .where(
+            model.created_at >= start_utc,
+            model.created_at < end_utc,
+            *extra_filters,
+        )
+        .group_by(model.business_id)
+    ).all()
+    return {business_id: count for business_id, count in rows}
+
+
 def _page_args() -> tuple[int, int]:
     try:
         page = max(1, int(request.args.get("page", 1)))
@@ -93,6 +117,98 @@ def list_businesses():
         items.append(business_dto(business, module_keys=module_keys))
 
     return jsonify({"items": items, "total": total, "page": page, "page_size": size}), 200
+
+
+@admin_bp.get("/analytics")
+@require_platform_operator
+def platform_analytics():
+    """Operational totals and per-tenant comparisons for platform operators."""
+    days = _analytics_days()
+    timezone_name = os.getenv("DEFAULT_TIMEZONE", "America/Chicago")
+    try:
+        local_zone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError:
+        timezone_name = "America/Chicago"
+        local_zone = ZoneInfo(timezone_name)
+
+    now_local = datetime.now(timezone.utc).astimezone(local_zone)
+    end_date = now_local.date()
+    start_date = end_date - timedelta(days=days - 1)
+    start_utc = datetime.combine(
+        start_date, datetime.min.time(), tzinfo=local_zone
+    ).astimezone(timezone.utc)
+    end_utc = datetime.combine(
+        end_date + timedelta(days=1), datetime.min.time(), tzinfo=local_zone
+    ).astimezone(timezone.utc)
+
+    businesses = list(g.db.execute(select(Business).order_by(Business.name)).scalars())
+    leads = _count_by_business(Lead, start_utc, end_utc)
+    completed = _count_by_business(Lead, start_utc, end_utc, Lead.is_complete.is_(True))
+    conversations = _count_by_business(ConversationSession, start_utc, end_utc)
+    appointments = _count_by_business(AppointmentRequest, start_utc, end_utc)
+    scheduled = _count_by_business(
+        AppointmentRequest, start_utc, end_utc, AppointmentRequest.status == "scheduled"
+    )
+    missed_calls = _count_by_business(MissedCallEvent, start_utc, end_utc)
+    followups = _count_by_business(
+        MissedCallEvent,
+        start_utc,
+        end_utc,
+        MissedCallEvent.decision.in_({"sent", "message_sent"}),
+    )
+
+    def total(values):
+        return sum(values.values())
+
+    rows = []
+    for business in businesses:
+        lead_count = leads.get(business.id, 0)
+        completed_count = completed.get(business.id, 0)
+        request_count = appointments.get(business.id, 0)
+        scheduled_count = scheduled.get(business.id, 0)
+        rows.append({
+            "id": business.id,
+            "name": business.name,
+            "slug": business.slug,
+            "status": business.status,
+            "is_demo": business.id == LEGACY_BUSINESS_ID,
+            "leads": lead_count,
+            "completed_intakes": completed_count,
+            "completion_rate": round((completed_count / lead_count) * 100, 1) if lead_count else 0.0,
+            "conversations": conversations.get(business.id, 0),
+            "appointment_requests": request_count,
+            "scheduled_appointments": scheduled_count,
+            "schedule_rate": round((scheduled_count / request_count) * 100, 1) if request_count else 0.0,
+            "missed_calls": missed_calls.get(business.id, 0),
+            "followups_sent": followups.get(business.id, 0),
+        })
+
+    lead_total = total(leads)
+    completed_total = total(completed)
+    appointment_total = total(appointments)
+    scheduled_total = total(scheduled)
+    return jsonify({
+        "period": {
+            "days": days,
+            "start_date": start_date.isoformat(),
+            "end_date": end_date.isoformat(),
+            "timezone": timezone_name,
+        },
+        "metrics": {
+            "businesses": len(businesses),
+            "active_businesses": sum(1 for business in businesses if business.status == "active"),
+            "leads": lead_total,
+            "completed_intakes": completed_total,
+            "completion_rate": round((completed_total / lead_total) * 100, 1) if lead_total else 0.0,
+            "conversations": total(conversations),
+            "appointment_requests": appointment_total,
+            "scheduled_appointments": scheduled_total,
+            "schedule_rate": round((scheduled_total / appointment_total) * 100, 1) if appointment_total else 0.0,
+            "missed_calls": total(missed_calls),
+            "followups_sent": total(followups),
+        },
+        "businesses": rows,
+    }), 200
 
 
 @admin_bp.post("/businesses")

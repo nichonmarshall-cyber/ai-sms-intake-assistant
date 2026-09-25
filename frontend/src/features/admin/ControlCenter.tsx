@@ -22,6 +22,7 @@ import {
   useFocusOnMount,
 } from "../../components";
 import { CalendarDiagnostics, DeliveryDiagnostics, PlatformConversations, WebhookDiagnostics } from "./AdminDiagnostics";
+import { PlatformAnalytics } from "./PlatformAnalytics";
 
 interface OverviewPayload {
   active_businesses: number;
@@ -367,9 +368,19 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
 
   return (
     <>
-      <h1 className="page-title" tabIndex={-1} ref={heading}>
-        {data.business.name}
-      </h1>
+      <div className="page-heading-actions">
+        <h1 className="page-title" tabIndex={-1} ref={heading}>
+          {data.business.name}
+        </h1>
+        {!readOnly && (
+          <div className="page-heading-actions__buttons">
+            <Link className="btn" to={`/b/${businessId}`}>View as client</Link>
+            {data.business.modules.includes("analytics") && (
+              <Link className="btn btn--primary" to={`/b/${businessId}/analytics`}>View analytics</Link>
+            )}
+          </div>
+        )}
+      </div>
       <p className="page-subtitle">
         {data.business.slug} · {data.business.status}
         {data.business.is_demo ? " · demo tenant" : " · production tenant"}
@@ -688,6 +699,7 @@ export function ControlCenterRoutes({ readOnly }: { readOnly: boolean }) {
       <Route index element={<PlatformOverview />} />
       <Route path="businesses" element={<BusinessList readOnly={readOnly} />} />
       <Route path="businesses/:businessId" element={<BusinessDetail readOnly={readOnly} />} />
+      <Route path="analytics" element={<PlatformAnalytics />} />
       <Route path="conversations" element={<PlatformConversations />} />
       <Route path="delivery" element={<DeliveryDiagnostics readOnly={readOnly} />} />
       <Route path="calendar" element={<CalendarDiagnostics />} />

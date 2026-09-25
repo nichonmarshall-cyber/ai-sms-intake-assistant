@@ -1,9 +1,17 @@
-"""Control Center business management and audit trail."""
+"""Control Center business management, analytics, and audit trail."""
+
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import select
 
 from modules.db import session_scope
-from modules.models import AuditEvent
+from modules.models import (
+    AppointmentRequest,
+    AuditEvent,
+    ConversationSession,
+    Lead,
+    MissedCallEvent,
+)
 from tests.conftest import (
     auth_headers,
     login,
@@ -235,3 +243,88 @@ def test_platform_overview_declares_what_it_cannot_measure(demo_app):
     unavailable = {item["key"] for item in body["unavailable"]}
     assert "websites_online" in unavailable
     assert "active_alerts" in unavailable
+
+
+def test_platform_analytics_compares_businesses_and_totals_real_records(demo_app):
+    first = make_business(name="First Client", slug="first-client")
+    second = make_business(name="Second Client", slug="second-client")
+    now = datetime.now(timezone.utc)
+    db = session_scope()
+    try:
+        lead = Lead(
+            business_id=first.id,
+            phone="+18175550101",
+            profile_key="roofing",
+            fields={"source": "Direct SMS"},
+            status="completed",
+            workflow_status="scheduled",
+            is_complete=True,
+            created_at=now,
+        )
+        db.add(lead)
+        db.flush()
+        db.add_all([
+            ConversationSession(
+                business_id=first.id,
+                phone="+18175550101",
+                state="completed",
+                history=[],
+                fields={},
+                expires_at=now + timedelta(minutes=45),
+                created_at=now,
+            ),
+            AppointmentRequest(
+                business_id=first.id,
+                lead_id=lead.id,
+                customer_phone="+18175550101",
+                status="scheduled",
+                created_at=now,
+            ),
+            MissedCallEvent(
+                business_id=first.id,
+                call_sid="CA-admin-analytics-sent",
+                caller_phone="+18175550101",
+                twilio_number="+18173936339",
+                decision="sent",
+                created_at=now,
+            ),
+            MissedCallEvent(
+                business_id=second.id,
+                call_sid="CA-admin-analytics-disabled",
+                caller_phone="+18175550102",
+                twilio_number="+18173936339",
+                decision="feature_disabled",
+                created_at=now,
+            ),
+        ])
+        db.commit()
+    finally:
+        db.close()
+
+    client, _, _ = _admin(demo_app)
+    response = client.get("/api/admin/analytics?days=7")
+
+    assert response.status_code == 200
+    body = response.get_json()
+    assert body["period"]["days"] == 7
+    assert body["metrics"]["leads"] == 1
+    assert body["metrics"]["completed_intakes"] == 1
+    assert body["metrics"]["scheduled_appointments"] == 1
+    assert body["metrics"]["missed_calls"] == 2
+    assert body["metrics"]["followups_sent"] == 1
+    rows = {row["id"]: row for row in body["businesses"]}
+    assert rows[first.id]["completion_rate"] == 100.0
+    assert rows[first.id]["followups_sent"] == 1
+    assert rows[second.id]["missed_calls"] == 1
+    assert rows[second.id]["followups_sent"] == 0
+
+
+def test_client_cannot_access_platform_analytics(demo_app):
+    business = make_business(name="Client Only", slug="client-only")
+    user = make_platform_user(
+        email="client-only@client.test", password=PASSWORD, platform_role="none"
+    )
+    make_membership(business.id, user.id, role="owner")
+    client, _, _ = login(demo_app, "client-only@client.test", PASSWORD)
+
+    assert client.get("/api/admin/analytics").status_code == 403
