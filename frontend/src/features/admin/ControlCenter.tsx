@@ -23,6 +23,8 @@ import {
 } from "../../components";
 import { CalendarDiagnostics, DeliveryDiagnostics, PlatformConversations, WebhookDiagnostics } from "./AdminDiagnostics";
 import { PlatformAnalytics } from "./PlatformAnalytics";
+import { WebsiteMonitoring } from "./WebsiteMonitoring";
+import { TwilioUsage } from "./TwilioUsage";
 
 interface OverviewPayload {
   active_businesses: number;
@@ -254,6 +256,7 @@ interface BusinessDetailPayload {
   memberships: Membership[];
   modules: ModuleEntitlement[];
   counts: { leads: number; missed_calls: number };
+  website: { url: string; monitor_id: string };
 }
 
 function BusinessDetail({ readOnly }: { readOnly: boolean }) {
@@ -276,6 +279,16 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
   const [newUserPassword, setNewUserPassword] = useState("");
   const [newUserRole, setNewUserRole] = useState("owner");
   const [userErrors, setUserErrors] = useState<Record<string, string>>({});
+  const [websiteUrl, setWebsiteUrl] = useState("");
+  const [monitorId, setMonitorId] = useState("");
+  const [websiteErrors, setWebsiteErrors] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (data) {
+      setWebsiteUrl(data.website.url || "");
+      setMonitorId(data.website.monitor_id || "");
+    }
+  }, [data]);
 
   const runAction = async (key: string, action: () => Promise<void>) => {
     setSaving(key);
@@ -362,6 +375,23 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
     }
   };
 
+  const saveWebsite = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setWebsiteErrors({});
+    setSaving("website");
+    setActionError(null);
+    try {
+      await api.patch(`/api/admin/businesses/${businessId}/website`, { url: websiteUrl, monitor_id: monitorId });
+      await reload();
+    } catch (err) {
+      const apiErr = err as { fields?: Record<string, string>; message?: string };
+      setWebsiteErrors(apiErr.fields ?? {});
+      setActionError(apiErr.message ?? "Could not save the website monitor.");
+    } finally {
+      setSaving(null);
+    }
+  };
+
   if (loading) return <Loading rows={6} />;
   if (error) return <ErrorState body={error} />;
   if (!data) return null;
@@ -427,6 +457,19 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
           </div>
         </Card>
       </div>
+
+      <Card title="Website monitoring">
+        <p className="management-copy">Attach this business to the matching UptimeRobot monitor. The monitor ID is shown in UptimeRobot after you open a monitor.</p>
+        <form className="inline-form-grid" onSubmit={saveWebsite} noValidate>
+          <Field label="Website URL" id="business-website" error={websiteErrors.url}>
+            <input id="business-website" className="input" value={websiteUrl} placeholder="https://example.com" disabled={readOnly} onChange={(event) => setWebsiteUrl(event.target.value)} />
+          </Field>
+          <Field label="UptimeRobot monitor ID" id="business-monitor-id" error={websiteErrors.monitor_id}>
+            <input id="business-monitor-id" className="input" value={monitorId} placeholder="123456789" disabled={readOnly} onChange={(event) => setMonitorId(event.target.value)} />
+          </Field>
+          <button className="btn btn--primary inline-form-grid__button" disabled={readOnly || saving === "website"}>Save website</button>
+        </form>
+      </Card>
 
       <Card title="Module entitlements">
         <p style={{ color: "var(--ntx-muted)", marginTop: 0 }}>
@@ -700,6 +743,8 @@ export function ControlCenterRoutes({ readOnly }: { readOnly: boolean }) {
       <Route path="businesses" element={<BusinessList readOnly={readOnly} />} />
       <Route path="businesses/:businessId" element={<BusinessDetail readOnly={readOnly} />} />
       <Route path="analytics" element={<PlatformAnalytics />} />
+      <Route path="websites" element={<WebsiteMonitoring />} />
+      <Route path="twilio-usage" element={<TwilioUsage />} />
       <Route path="conversations" element={<PlatformConversations />} />
       <Route path="delivery" element={<DeliveryDiagnostics readOnly={readOnly} />} />
       <Route path="calendar" element={<CalendarDiagnostics />} />

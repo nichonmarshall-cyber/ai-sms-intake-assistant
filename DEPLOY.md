@@ -39,6 +39,20 @@ values in the Render dashboard under the web service's **Environment** tab:
 | `MISSED_CALL_ALLOWLIST` | Your test numbers, comma-separated E.164 values; leave the feature disabled until verification |
 | `MISSED_CALL_BLOCKLIST` | Optional numbers that must never receive an automated missed-call text |
 
+Optional Control Center monitoring integrations:
+
+| Variable | Value |
+|---|---|
+| `UPTIMEROBOT_API_KEY` | UptimeRobot read-only/main API key; the server uses it to read monitor health |
+| `TWILIO_API_KEY_SID` | Optional API key SID for usage reporting; otherwise the Account SID is used |
+| `TWILIO_API_KEY_SECRET` | Optional API key secret; otherwise `TWILIO_AUTH_TOKEN` is used |
+
+Twilio usage therefore works with the credentials already required above.
+UptimeRobot performs the recurring checks; after creating each HTTP monitor,
+attach its URL and monitor ID from the matching Business page in the Control
+Center. Provider credentials remain server-side and must never be entered in a
+client-facing settings page.
+
 Password recovery email is strongly recommended before inviting a client:
 
 | Variable | Value |

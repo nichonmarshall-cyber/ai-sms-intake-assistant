@@ -60,6 +60,12 @@ services:
         sync: false
       - key: TWILIO_MESSAGING_SERVICE_SID
         sync: false
+      - key: TWILIO_API_KEY_SID
+        sync: false
+      - key: TWILIO_API_KEY_SECRET
+        sync: false
+      - key: UPTIMEROBOT_API_KEY
+        sync: false
       - key: PUBLIC_BASE_URL
         sync: false
       - key: SMTP_HOST

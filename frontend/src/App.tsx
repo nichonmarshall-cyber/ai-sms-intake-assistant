@@ -33,6 +33,8 @@ function ControlCenter() {
         { to: "/admin", label: "Control Center", icon: "◉" },
         { to: "/admin/businesses", label: "Businesses", icon: "▦" },
         { to: "/admin/analytics", label: "Analytics", icon: "▤" },
+        { to: "/admin/websites", label: "Websites", icon: "◇" },
+        { to: "/admin/twilio-usage", label: "Twilio usage", icon: "$" },
         { to: "/admin/conversations", label: "Conversations", icon: "◍" },
         { to: "/admin/delivery", label: "Delivery", icon: "◎" },
         { to: "/admin/calendar", label: "Calendar", icon: "▣" },

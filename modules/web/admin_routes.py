@@ -12,7 +12,13 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import String, cast, func, or_, select
 
-from modules import calendar_service, entitlements, missed_call as missed_call_service
+from modules import (
+    calendar_service,
+    entitlements,
+    missed_call as missed_call_service,
+    twilio_usage,
+    website_monitoring,
+)
 from modules.auth import passwords, sessions
 from modules.auth.decorators import platform_role, require_platform_admin, require_platform_operator
 from modules.conversation_store import normalize_phone
@@ -279,6 +285,7 @@ def get_business(business_id: str):
     return jsonify(
         {
             "business": business_dto(business, module_keys=sorted(enabled)),
+            "website": (business.settings or {}).get("website") or {"url": "", "monitor_id": ""},
             "phone_numbers": [phone_number_dto(n) for n in numbers],
             "memberships": [
                 membership_dto(m, user=g.db.get(PlatformUser, m.user_id)) for m in memberships
@@ -353,6 +360,113 @@ def update_business(business_id: str):
 
     module_keys = sorted(entitlements.enabled_module_keys(g.db, business_id))
     return jsonify(business_dto(business, module_keys=module_keys)), 200
+
+
+@admin_bp.patch("/businesses/<business_id>/website")
+@require_platform_admin
+def update_business_website(business_id: str):
+    business = g.db.get(Business, business_id)
+    if business is None:
+        return jsonify({"error": "Business not found."}), 404
+
+    payload = request.get_json(silent=True) or {}
+    try:
+        url = website_monitoring.normalize_url(payload.get("url") or "")
+    except ValueError as exc:
+        return jsonify({"error": "Validation failed.", "fields": {"url": str(exc)}}), 400
+    monitor_id = str(payload.get("monitor_id") or "").strip()
+    if monitor_id and not monitor_id.isdigit():
+        return jsonify({"error": "Validation failed.", "fields": {"monitor_id": "Monitor ID must contain numbers only."}}), 400
+
+    settings = dict(business.settings or {})
+    settings["website"] = {"url": url, "monitor_id": monitor_id}
+    business.settings = settings
+    record_audit_event(
+        g.db,
+        action="business.website.update",
+        target_type="business",
+        target_id=business_id,
+        business_id=business_id,
+        actor_user_id=g.current_user.id,
+        details={"url": url, "monitor_id": monitor_id},
+    )
+    g.db.commit()
+    return jsonify(settings["website"]), 200
+
+
+@admin_bp.get("/websites")
+@require_platform_operator
+def platform_websites():
+    businesses = list(g.db.execute(select(Business).order_by(Business.name)).scalars())
+    configured = website_monitoring.is_configured()
+    provider_error = None
+    monitors = []
+    if configured:
+        try:
+            monitors = website_monitoring.list_monitors()
+        except Exception as exc:  # provider failures should not erase stored site config
+            logger.warning("UptimeRobot lookup failed: %s", exc)
+            provider_error = "UptimeRobot could not be reached. Try refreshing in a moment."
+
+    by_id = {item["id"]: item for item in monitors}
+    by_url = {}
+    for item in monitors:
+        try:
+            by_url[website_monitoring.normalize_url(item["url"])] = item
+        except ValueError:
+            continue
+
+    rows = []
+    for business in businesses:
+        config = (business.settings or {}).get("website") or {}
+        url = config.get("url") or ""
+        monitor = by_id.get(str(config.get("monitor_id") or ""))
+        if monitor is None and url:
+            monitor = by_url.get(website_monitoring.normalize_url(url))
+        rows.append({
+            "business": {"id": business.id, "name": business.name, "slug": business.slug},
+            "url": url,
+            "monitor_id": str(config.get("monitor_id") or (monitor or {}).get("id") or ""),
+            "monitor": monitor,
+        })
+
+    matched_ids = {row["monitor"]["id"] for row in rows if row["monitor"]}
+    return jsonify({
+        "provider": {
+            "name": "UptimeRobot",
+            "configured": configured,
+            "status": "error" if provider_error else ("connected" if configured else "not_configured"),
+            "error": provider_error,
+        },
+        "metrics": {
+            "businesses": len(businesses),
+            "configured_sites": sum(1 for row in rows if row["url"]),
+            "online": sum(1 for row in rows if row["monitor"] and row["monitor"]["status"] == "up"),
+            "attention": sum(1 for row in rows if row["monitor"] and row["monitor"]["status"] in {"down", "seems_down"}),
+        },
+        "sites": rows,
+        "unmatched_monitors": [item for item in monitors if item["id"] not in matched_ids],
+    }), 200
+
+
+@admin_bp.get("/twilio-usage")
+@require_platform_operator
+def platform_twilio_usage():
+    period = (request.args.get("period") or "this_month").strip().lower()
+    if period not in {"this_month", "last_month"}:
+        return jsonify({"error": "Period must be this_month or last_month."}), 400
+    if not twilio_usage.is_configured():
+        return jsonify({"configured": False, "usage": None}), 200
+    try:
+        usage = twilio_usage.fetch_usage(period)
+    except Exception as exc:
+        logger.warning("Twilio usage lookup failed: %s", exc)
+        return jsonify({
+            "configured": True,
+            "usage": None,
+            "error": "Twilio usage could not be loaded. Check the account credentials and try again.",
+        }), 200
+    return jsonify({"configured": True, "usage": usage}), 200
 
 
 @admin_bp.put("/businesses/<business_id>/modules/<module_key>")
@@ -783,11 +897,15 @@ def platform_overview():
                 "pending_appointments": pending_appointments,
                 "status": calendar_status,
             },
-            "unavailable": [
-                {"key": "websites_online", "reason": "No monitoring provider configured."},
-                {"key": "sms_usage", "reason": "Twilio usage API not connected."},
-                {"key": "active_alerts", "reason": "Alerts arrive in Phase 3."},
-            ],
+            "unavailable": (
+                ([] if website_monitoring.is_configured() else [
+                    {"key": "websites_online", "reason": "Add UPTIMEROBOT_API_KEY on Render."}
+                ])
+                + ([] if twilio_usage.is_configured() else [
+                    {"key": "sms_usage", "reason": "Twilio usage credentials are not configured."}
+                ])
+                + [{"key": "active_alerts", "reason": "Alerts arrive in Phase 3."}]
+            ),
         }
     ), 200
 
