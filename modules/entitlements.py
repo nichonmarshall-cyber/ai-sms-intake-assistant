@@ -34,7 +34,7 @@ MODULE_REGISTRY: tuple[ModuleSpec, ...] = (
     ModuleSpec("conversations", "Conversations", "message-square", True, "Review stored SMS intake timelines."),
     ModuleSpec("appointments", "Appointments", "calendar", True, "Review and schedule appointment requests."),
     ModuleSpec("ai_intake", "AI Intake", "cpu", True, "Monitor intake outcomes and missed-call follow-up."),
-    ModuleSpec("website", "Website", "globe", False, "Requires a monitoring provider."),
+    ModuleSpec("website", "Website", "globe", True, "Website status, uptime, and response health."),
     ModuleSpec("local_seo", "Local SEO", "search", False, "Requires Google Search Console."),
     ModuleSpec("reviews", "Reviews", "star", False, "Requires Google Business Profile."),
     ModuleSpec("analytics", "Analytics", "bar-chart", True, "Lead, intake, appointment, and missed-call trends."),

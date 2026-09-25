@@ -9,7 +9,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import Integer, String, cast, func, or_, select
 
-from modules import calendar_service, entitlements
+from modules import calendar_service, entitlements, website_monitoring
 from modules.auth.decorators import require_business_access, require_module
 from modules.models import AppointmentRequest, Business, ConversationSession, Lead, MissedCallEvent
 from modules.serializers import (
@@ -55,6 +55,37 @@ def navigation(business_id: str):
             "role": g.business_role,
         }
     ), 200
+
+
+@client_bp.get("/businesses/<business_id>/website")
+@require_business_access()
+@require_module("website")
+def website_health(business_id: str):
+    """Return only the authenticated tenant's attached website monitor."""
+    business = g.db.get(Business, business_id)
+    config = (business.settings or {}).get("website") or {}
+    website_url = config.get("url") or ""
+    if not website_monitoring.is_configured():
+        return jsonify({
+            "website_url": website_url,
+            "provider": {"name": "UptimeRobot", "status": "not_configured"},
+            "monitor": None,
+        }), 200
+
+    try:
+        monitor = website_monitoring.monitor_for_business(business.settings)
+    except Exception:
+        return jsonify({
+            "website_url": website_url,
+            "provider": {"name": "UptimeRobot", "status": "unavailable"},
+            "monitor": None,
+        }), 200
+
+    return jsonify({
+        "website_url": website_url,
+        "provider": {"name": "UptimeRobot", "status": "connected"},
+        "monitor": monitor,
+    }), 200
 
 
 @client_bp.get("/businesses/<business_id>/overview")

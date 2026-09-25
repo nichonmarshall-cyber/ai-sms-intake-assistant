@@ -27,6 +27,7 @@ import { Conversations } from "./Conversations";
 import { AIIntake } from "./AIIntake";
 import { Appointments } from "./Appointments";
 import { Analytics } from "./Analytics";
+import { Website } from "./Website";
 
 interface OverviewPayload {
   metrics: {
@@ -635,6 +636,7 @@ export function ClientDashboardRoutes({
       <Route path="appointments" element={<Appointments businessId={businessId} readOnly={readOnly} />} />
       <Route path="ai_intake" element={<AIIntake businessId={businessId} readOnly={readOnly} />} />
       <Route path="analytics" element={<Analytics businessId={businessId} />} />
+      <Route path="website" element={<Website businessId={businessId} />} />
       <Route path="settings" element={<Settings businessId={businessId} readOnly={readOnly} />} />
       {modules
         .filter((module) => !module.implemented)

@@ -75,3 +75,25 @@ def list_monitors() -> list[dict]:
             "average_response_ms": average_ms,
         })
     return monitors
+
+
+def monitor_for_business(settings: dict | None, monitors: list[dict] | None = None) -> dict | None:
+    """Resolve only the monitor attached to one business's stored website config."""
+    config = (settings or {}).get("website") or {}
+    monitor_id = str(config.get("monitor_id") or "").strip()
+    website_url = config.get("url") or ""
+    rows = monitors if monitors is not None else list_monitors()
+
+    if monitor_id:
+        match = next((item for item in rows if str(item.get("id")) == monitor_id), None)
+        if match is not None:
+            return match
+    if website_url:
+        expected = normalize_url(website_url)
+        for item in rows:
+            try:
+                if normalize_url(item.get("url") or "") == expected:
+                    return item
+            except ValueError:
+                continue
+    return None
