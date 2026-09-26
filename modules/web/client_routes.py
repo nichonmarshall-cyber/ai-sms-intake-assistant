@@ -57,55 +57,66 @@ def navigation(business_id: str):
     ), 200
 
 
+def _website_health_payload(business: Business) -> dict:
+    """Resolve one business's configured monitor without exposing provider credentials."""
+    config = (business.settings or {}).get("website") or {}
+    website_url = config.get("url") or ""
+    if not website_monitoring.is_configured():
+        return {
+            "website_url": website_url,
+            "provider": {"name": "UptimeRobot", "status": "not_configured"},
+            "monitor": None,
+        }
+
+    try:
+        monitor = website_monitoring.monitor_for_business(business.settings)
+    except Exception:
+        return {
+            "website_url": website_url,
+            "provider": {"name": "UptimeRobot", "status": "unavailable"},
+            "monitor": None,
+        }
+
+    return {
+        "website_url": website_url,
+        "provider": {"name": "UptimeRobot", "status": "connected"},
+        "monitor": monitor,
+    }
+
+
 @client_bp.get("/businesses/<business_id>/website")
 @require_business_access()
 @require_module("website")
 def website_health(business_id: str):
     """Return only the authenticated tenant's attached website monitor."""
     business = g.db.get(Business, business_id)
-    config = (business.settings or {}).get("website") or {}
-    website_url = config.get("url") or ""
-    if not website_monitoring.is_configured():
-        return jsonify({
-            "website_url": website_url,
-            "provider": {"name": "UptimeRobot", "status": "not_configured"},
-            "monitor": None,
-        }), 200
-
-    try:
-        monitor = website_monitoring.monitor_for_business(business.settings)
-    except Exception:
-        return jsonify({
-            "website_url": website_url,
-            "provider": {"name": "UptimeRobot", "status": "unavailable"},
-            "monitor": None,
-        }), 200
-
-    return jsonify({
-        "website_url": website_url,
-        "provider": {"name": "UptimeRobot", "status": "connected"},
-        "monitor": monitor,
-    }), 200
+    return jsonify(_website_health_payload(business)), 200
 
 
 @client_bp.get("/businesses/<business_id>/overview")
 @require_business_access()
 @require_module("overview")
 def overview(business_id: str):
-    """Counts come from real rows. Everything not yet built is declared, not faked."""
-    lead_count = g.db.execute(
-        select(func.count()).select_from(Lead).where(Lead.business_id == business_id)
-    ).scalar_one()
-    open_leads = g.db.execute(
-        select(func.count())
-        .select_from(Lead)
-        .where(Lead.business_id == business_id, Lead.workflow_status == "new")
-    ).scalar_one()
+    """Build the landing page from this business's enabled modules."""
+    business = g.db.get(Business, business_id)
+    enabled = entitlements.enabled_module_keys(g.db, business_id)
+    navigation_modules = entitlements.navigation_for(g.db, business_id)
+
+    needs_leads = bool(enabled & {"leads", "ai_intake", "analytics"})
+    needs_conversations = bool(enabled & {"conversations", "ai_intake", "analytics"})
+    needs_appointments = bool(enabled & {"appointments", "analytics"})
+    needs_missed_calls = bool(enabled & {"ai_intake", "analytics"})
+
+    all_leads = list(
+        g.db.execute(select(Lead).where(Lead.business_id == business_id)).scalars()
+    ) if needs_leads else []
+    lead_count = len(all_leads)
+    open_leads = sum(1 for lead in all_leads if lead.workflow_status == "new")
     missed_calls = g.db.execute(
         select(func.count())
         .select_from(MissedCallEvent)
         .where(MissedCallEvent.business_id == business_id)
-    ).scalar_one()
+    ).scalar_one() if needs_missed_calls else 0
     open_conversations = g.db.execute(
         select(func.count())
         .select_from(ConversationSession)
@@ -113,7 +124,7 @@ def overview(business_id: str):
             ConversationSession.business_id == business_id,
             ConversationSession.state.in_({"awaiting_profile_selection", "in_progress"}),
         )
-    ).scalar_one()
+    ).scalar_one() if needs_conversations else 0
     pending_appointments = g.db.execute(
         select(func.count())
         .select_from(AppointmentRequest)
@@ -121,7 +132,7 @@ def overview(business_id: str):
             AppointmentRequest.business_id == business_id,
             AppointmentRequest.status.in_({"pending", "sync_failed"}),
         )
-    ).scalar_one()
+    ).scalar_one() if needs_appointments else 0
     recent_leads = list(
         g.db.execute(
             select(Lead)
@@ -129,7 +140,7 @@ def overview(business_id: str):
             .order_by(Lead.created_at.desc(), Lead.id.desc())
             .limit(6)
         ).scalars()
-    )
+    ) if "leads" in enabled else []
     recent_sessions = list(
         g.db.execute(
             select(ConversationSession)
@@ -137,10 +148,7 @@ def overview(business_id: str):
             .order_by(ConversationSession.updated_at.desc(), ConversationSession.id.desc())
             .limit(4)
         ).scalars()
-    )
-    all_leads = list(
-        g.db.execute(select(Lead).where(Lead.business_id == business_id)).scalars()
-    )
+    ) if "conversations" in enabled else []
     source_counts = Counter(
         str((lead.fields or {}).get("source") or "Direct SMS").strip() or "Direct SMS"
         for lead in all_leads
@@ -161,11 +169,11 @@ def overview(business_id: str):
             .order_by(AppointmentRequest.created_at.desc(), AppointmentRequest.id.desc())
             .limit(2)
         ).scalars()
-    )
-    business = g.db.get(Business, business_id)
+    ) if "appointments" in enabled else []
 
     return jsonify(
         {
+            "enabled_modules": navigation_modules,
             "metrics": {
                 "total_leads": lead_count,
                 "new_leads": open_leads,
@@ -173,6 +181,7 @@ def overview(business_id: str):
                 "missed_calls_handled": missed_calls,
                 "pending_approval": pending_appointments,
             },
+            "website": _website_health_payload(business) if "website" in enabled else None,
             "recent_leads": [lead_dto(lead) for lead in recent_leads],
             "recent_conversations": [conversation_summary_dto(row) for row in recent_sessions],
             "appointment_requests": [appointment_dto(row) for row in appointment_requests],

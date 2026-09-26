@@ -30,6 +30,7 @@ import { Analytics } from "./Analytics";
 import { Website } from "./Website";
 
 interface OverviewPayload {
+  enabled_modules: NavModule[];
   metrics: {
     total_leads: number;
     new_leads: number;
@@ -43,6 +44,20 @@ interface OverviewPayload {
   calendar: CalendarConnection;
   lead_sources: { source: string; count: number }[];
   lead_activity: { date: string; count: number }[];
+  website: {
+    website_url: string;
+    provider: { name: string; status: string };
+    monitor: {
+      id: string;
+      name: string;
+      url: string;
+      status: string;
+      uptime_7d?: string | null;
+      uptime_30d?: string | null;
+      uptime_90d?: string | null;
+      average_response_ms?: number | null;
+    } | null;
+  } | null;
   unavailable: UnavailableMetric[];
 }
 
@@ -338,7 +353,55 @@ function Leads({ businessId, readOnly }: { businessId: string; readOnly: boolean
   );
 }
 
-function Overview({ businessId }: { businessId: string }) {
+function moduleSummary(module: NavModule, data: OverviewPayload) {
+  const monitor = data.website?.monitor;
+  switch (module.key) {
+    case "website":
+      if (!monitor) return { value: "Connecting", detail: "Website monitoring setup is in progress.", tone: "warn" as const };
+      return {
+        value: monitor.status === "up" ? "Online" : "Needs attention",
+        detail: monitor.uptime_30d ? `${monitor.uptime_30d}% uptime over 30 days` : "Uptime data is being collected.",
+        tone: monitor.status === "up" ? "ok" as const : "warn" as const,
+      };
+    case "local_seo":
+      return { value: "Coming soon", detail: "Google search visibility and rankings will appear here.", tone: "default" as const };
+    case "reviews":
+      return { value: "Coming soon", detail: "Google rating and review activity will appear here.", tone: "default" as const };
+    case "analytics":
+      return { value: "Reporting ready", detail: `${data.metrics.total_leads} lead${data.metrics.total_leads === 1 ? "" : "s"} tracked`, tone: "ok" as const };
+    case "leads":
+      return { value: `${data.metrics.new_leads} new`, detail: `${data.metrics.total_leads} total leads captured`, tone: "demo" as const };
+    case "conversations":
+      return { value: `${data.metrics.open_conversations} open`, detail: "SMS conversations awaiting completion", tone: "demo" as const };
+    case "appointments":
+      return { value: `${data.metrics.pending_approval} pending`, detail: "Appointment requests ready for review", tone: "demo" as const };
+    case "ai_intake":
+      return { value: `${data.metrics.missed_calls_handled} calls handled`, detail: `${data.metrics.total_leads} leads captured by intake`, tone: "ok" as const };
+    case "settings":
+      return { value: "Profile active", detail: "Business preferences and integrations", tone: "ok" as const };
+    default:
+      return module.implemented
+        ? { value: "Enabled", detail: module.description, tone: "ok" as const }
+        : { value: "Coming soon", detail: module.description, tone: "default" as const };
+  }
+}
+
+function OverviewModuleCard({ module, data }: { module: NavModule; data: OverviewPayload }) {
+  const summary = moduleSummary(module, data);
+  return (
+    <section className="overview-module-card">
+      <div className="overview-module-card__topline">
+        <span className="overview-module-card__icon" aria-hidden="true">{module.icon === "star" ? "★" : module.icon === "globe" ? "◇" : module.icon === "search" ? "◎" : module.icon === "bar-chart" ? "▤" : module.icon === "settings" ? "⚙" : "◆"}</span>
+        <span className="overview-module-card__label">{module.label}</span>
+        <Badge tone={summary.tone}>{summary.value}</Badge>
+      </div>
+      <p>{summary.detail}</p>
+      {module.implemented ? <Link className="table__link" to={module.key}>Open {module.label.toLowerCase()}</Link> : <span className="overview-module-card__soon">Enabled for this business</span>}
+    </section>
+  );
+}
+
+function Overview({ businessId, modules }: { businessId: string; modules: NavModule[] }) {
   const heading = useFocusOnMount<HTMLHeadingElement>();
   const [data, setData] = useState<OverviewPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -363,26 +426,35 @@ function Overview({ businessId }: { businessId: string }) {
   }, [businessId]);
 
   const maxActivity = Math.max(1, ...(data?.lead_activity.map((item) => item.count) ?? [1]));
+  const enabledModules = data?.enabled_modules ?? modules;
+  const enabledKeys = new Set(enabledModules.map((module) => module.key));
+  const summaryModules = enabledModules.filter((module) => module.key !== "overview").slice(0, 6);
+  const showIntakeStats = ["leads", "conversations", "appointments", "ai_intake"].some((key) => enabledKeys.has(key));
 
   return (
     <>
       <h1 className="page-title" tabIndex={-1} ref={heading}>
         Overview
       </h1>
-      <p className="page-subtitle">Your intake assistant at a glance.</p>
+      <p className="page-subtitle">Your enabled business services at a glance.</p>
 
       {loading && <Loading rows={3} />}
       {error && <ErrorState body={error} />}
       {data && (
         <>
-          <div className="stat-grid">
-            <Stat label="New leads" value={data.metrics.new_leads} icon="◆" />
-            <Stat label="Open conversations" value={data.metrics.open_conversations} icon="◉" />
-            <Stat label="Pending approval" value={data.metrics.pending_approval} icon="◷" />
-            <Stat label="Missed calls handled" value={data.metrics.missed_calls_handled} icon="✆" />
+          <div className="overview-module-grid">
+            {summaryModules.map((module) => <OverviewModuleCard key={module.key} module={module} data={data} />)}
           </div>
 
-          <div className="overview-live-grid">
+          {showIntakeStats && <div className="stat-grid">
+            {enabledKeys.has("leads") && <Stat label="New leads" value={data.metrics.new_leads} icon="◆" />}
+            {enabledKeys.has("conversations") && <Stat label="Open conversations" value={data.metrics.open_conversations} icon="◉" />}
+            {enabledKeys.has("appointments") && <Stat label="Pending approval" value={data.metrics.pending_approval} icon="◷" />}
+            {enabledKeys.has("ai_intake") && <Stat label="Missed calls handled" value={data.metrics.missed_calls_handled} icon="✆" />}
+          </div>}
+
+          {(enabledKeys.has("leads") || enabledKeys.has("appointments")) && <div className="overview-live-grid">
+            {enabledKeys.has("leads") &&
             <Card title="Recent leads" action={<Link className="table__link" to="leads">View all</Link>}>
               {data.recent_leads.length === 0 ? (
                 <EmptyState title="No leads yet" body="Captured leads will appear here." />
@@ -399,8 +471,9 @@ function Overview({ businessId }: { businessId: string }) {
                   ))}
                 </div>
               )}
-            </Card>
+            </Card>}
 
+            {enabledKeys.has("appointments") &&
             <Card title="Appointment requests" action={<Link className="table__link" to="appointments">View all</Link>}>
               {data.appointment_requests.length === 0 ? (
                 <EmptyState title="No pending requests" body="New scheduling preferences will appear here." />
@@ -419,10 +492,11 @@ function Overview({ businessId }: { businessId: string }) {
                 <span>{data.calendar.connected ? "✓" : "!"}</span>
                 <strong>{data.calendar.connected ? `${data.calendar.calendar_name} connected` : "Calendar not connected"}</strong>
               </div>
-            </Card>
-          </div>
+            </Card>}
+          </div>}
 
-          <div className="overview-live-grid overview-live-grid--activity">
+          {(enabledKeys.has("conversations") || enabledKeys.has("analytics")) && <div className="overview-live-grid overview-live-grid--activity">
+            {enabledKeys.has("conversations") &&
             <Card title="Recent conversations" action={<Link className="table__link" to="conversations">View all</Link>}>
               {data.recent_conversations.length === 0 ? (
                 <EmptyState title="No conversations yet" body="SMS intake conversations will appear here." />
@@ -436,7 +510,8 @@ function Overview({ businessId }: { businessId: string }) {
                   ))}
                 </div>
               )}
-            </Card>
+            </Card>}
+            {enabledKeys.has("analytics") &&
             <Card title="Lead activity · last 7 days">
               <div className="activity-chart" role="img" aria-label="New leads per day for the last seven days">
                 {data.lead_activity.map((item) => (
@@ -449,12 +524,12 @@ function Overview({ businessId }: { businessId: string }) {
                   </div>
                 ))}
               </div>
-            </Card>
+            </Card>}
 
-          </div>
-          <Card title="Lead sources">
+          </div>}
+          {(enabledKeys.has("leads") || enabledKeys.has("analytics")) && <Card title="Lead sources">
             {data.lead_sources.length === 0 ? <EmptyState title="No source data" body="Lead attribution will appear as intake records are captured." /> : <div className="source-list">{data.lead_sources.map((item) => <div key={item.source}><span>{item.source.replace(/_/g, " ")}</span><strong>{item.count}</strong></div>)}</div>}
-          </Card>
+          </Card>}
         </>
       )}
     </>
@@ -630,7 +705,7 @@ export function ClientDashboardRoutes({
 
   return (
     <Routes>
-      <Route index element={<Overview businessId={businessId} />} />
+      <Route index element={<Overview businessId={businessId} modules={modules} />} />
       <Route path="leads" element={<Leads businessId={businessId} readOnly={readOnly} />} />
       <Route path="conversations" element={<Conversations businessId={businessId} />} />
       <Route path="appointments" element={<Appointments businessId={businessId} readOnly={readOnly} />} />
