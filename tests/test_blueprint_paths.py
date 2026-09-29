@@ -84,6 +84,21 @@ def test_dashboard_is_served_when_the_bundle_has_been_built(demo_app, tmp_path, 
     assert b"id=root" in response.data
 
 
+def test_reset_password_page_is_not_confused_with_legacy_reset_route(demo_app, tmp_path, monkeypatch):
+    from modules.web import spa
+
+    dist = tmp_path / "dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<!doctype html><div id=root></div>")
+    monkeypatch.setattr(spa, "DIST_DIR", str(dist))
+    monkeypatch.setattr(spa, "INDEX_FILE", str(dist / "index.html"))
+
+    response = demo_app.app.test_client().get("/reset-password?token=test-token")
+    assert response.status_code == 200
+    assert b"id=root" in response.data
+    assert demo_app.app.test_client().get("/reset").status_code == 404
+
+
 def test_spa_route_never_captures_the_sms_webhook(demo_app, tmp_path, monkeypatch):
     """Even with a built bundle present, Twilio's path must not be swallowed."""
     from modules.web import spa
