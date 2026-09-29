@@ -19,7 +19,8 @@ DIST_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__
 INDEX_FILE = os.path.join(DIST_DIR, "index.html")
 
 # API prefixes must never be swallowed by the catch-all.
-RESERVED_PREFIXES = ("api/", "sms", "voice/", "health", "reset")
+RESERVED_PREFIXES = ("api/", "voice/")
+RESERVED_PATHS = {"sms", "health", "reset"}
 
 
 def dashboard_available() -> bool:
@@ -45,7 +46,7 @@ def spa_assets(filename: str):
 @spa_bp.get("/")
 @spa_bp.get("/<path:path>")
 def spa_index(path: str = ""):
-    if path.startswith(RESERVED_PREFIXES):
+    if path in RESERVED_PATHS or path.startswith(RESERVED_PREFIXES):
         return jsonify({"error": "Not found."}), 404
     if not dashboard_available():
         return _unavailable()
