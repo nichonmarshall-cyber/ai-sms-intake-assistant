@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Link, Route, Routes, useParams } from "react-router-dom";
-import { api } from "../../lib/api";
+import { api, ApiError } from "../../lib/api";
 import type {
   AuditEvent,
   Business,
@@ -279,6 +279,7 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
   const [newUserPassword, setNewUserPassword] = useState("");
   const [newUserSetupMethod, setNewUserSetupMethod] = useState<"email" | "temporary">("email");
   const [userNotice, setUserNotice] = useState<string | null>(null);
+  const [userCreateError, setUserCreateError] = useState<string | null>(null);
   const [newUserRole, setNewUserRole] = useState("owner");
   const [userErrors, setUserErrors] = useState<Record<string, string>>({});
   const [websiteUrl, setWebsiteUrl] = useState("");
@@ -354,6 +355,7 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
     setSaving("create-user");
     setActionError(null);
     setUserNotice(null);
+    setUserCreateError(null);
     try {
       const user = await api.post<User & { setup_email_sent?: boolean }>("/api/admin/users", {
         display_name: newUserName,
@@ -376,7 +378,15 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
     } catch (err) {
       const apiErr = err as { fields?: Record<string, string>; message?: string };
       setUserErrors(apiErr.fields ?? {});
-      setActionError(apiErr.message ?? "Could not create the client user.");
+      if (err instanceof ApiError && err.status === 409) {
+        const existing = users.data?.items.find((user) => user.email.toLowerCase() === newUserEmail.trim().toLowerCase());
+        if (existing) setSelectedUserId(existing.id);
+        setUserCreateError(existing
+          ? "That email already has an account. It is selected under Attach an existing user. Click Grant access to add it to this business."
+          : "That email already has an account. Find it under Attach an existing user to grant access to this business.");
+      } else {
+        setUserCreateError(apiErr.message ?? "Could not create the client user.");
+      }
     } finally {
       setSaving(null);
     }
@@ -708,6 +718,7 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
             </Field>
             <button className="btn btn--primary" disabled={saving === "create-user"}>Create and grant access</button>
             <p className="form-hint">Email links work once and expire in 30 minutes. Temporary passwords must be replaced before dashboard access.</p>
+            {userCreateError && <p className="field__error" role="alert">{userCreateError}</p>}
             {userNotice && <p className="auth-success" role="status">{userNotice}</p>}
           </form>
         </Card>}
