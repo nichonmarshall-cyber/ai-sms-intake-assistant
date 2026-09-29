@@ -19,8 +19,14 @@ from modules import (
     twilio_usage,
     website_monitoring,
 )
-from modules.auth import passwords, sessions
-from modules.auth.decorators import platform_role, require_platform_admin, require_platform_operator
+from modules.auth import mailer, password_reset, passwords, sessions
+from modules.auth.crypto import new_token
+from modules.auth.decorators import (
+    client_ip,
+    platform_role,
+    require_platform_admin,
+    require_platform_operator,
+)
 from modules.conversation_store import normalize_phone
 from modules.models import (
     AuditEvent,
@@ -600,15 +606,30 @@ def create_user():
     email = (payload.get("email") or "").strip().lower()
     password = payload.get("password") or ""
     role = (payload.get("platform_role") or "none").strip().lower()
+    setup_method = (payload.get("setup_method") or "temporary").strip().lower()
+    business_id = (payload.get("business_id") or "").strip()
+    tenant_role = (payload.get("tenant_role") or "owner").strip().lower()
 
     errors = {}
     if "@" not in email:
         errors["email"] = "A valid email is required."
-    strength_error = passwords.validate_password_strength(password)
-    if strength_error:
-        errors["password"] = strength_error
+    if setup_method not in {"temporary", "email"}:
+        errors["setup_method"] = "Choose email setup or a temporary password."
+    if setup_method == "email":
+        if role != "none" or not business_id:
+            errors["setup_method"] = "Email setup is only available for a business client."
+        if not mailer.configured() or not os.getenv("PUBLIC_BASE_URL", "").strip():
+            return jsonify({"error": "Account setup email is not configured."}), 503
+    else:
+        strength_error = passwords.validate_password_strength(password)
+        if strength_error:
+            errors["password"] = strength_error
     if role not in VALID_PLATFORM_ROLES:
         errors["platform_role"] = "Invalid role."
+    if business_id and g.db.get(Business, business_id) is None:
+        errors["business_id"] = "Business not found."
+    if business_id and (role != "none" or tenant_role not in VALID_MEMBERSHIP_ROLES):
+        errors["tenant_role"] = "Choose a valid client role."
     if errors:
         return jsonify({"error": "Validation failed.", "fields": errors}), 400
 
@@ -622,7 +643,7 @@ def create_user():
         id=str(uuid4()),
         email=email,
         display_name=(payload.get("display_name") or "").strip() or None,
-        password_hash=passwords.hash_password(password),
+        password_hash=passwords.hash_password(new_token() if setup_method == "email" else password),
         platform_role=role,
         is_platform_admin=(role == "admin"),
         is_active=True,
@@ -630,6 +651,12 @@ def create_user():
     )
     g.db.add(user)
     g.db.flush()
+    if business_id:
+        g.db.add(BusinessMembership(business_id=business_id, user_id=user.id, role=tenant_role))
+    setup_token = (
+        password_reset.issue(g.db, user_id=user.id, raw_ip=client_ip())
+        if setup_method == "email" else None
+    )
 
     record_audit_event(
         g.db,
@@ -637,10 +664,37 @@ def create_user():
         target_type="platform_user",
         target_id=user.id,
         actor_user_id=g.current_user.id,
-        details={"email": email, "platform_role": role},
+        business_id=business_id or None,
+        details={"email": email, "platform_role": role, "setup_method": setup_method},
     )
     g.db.commit()
-    return jsonify(user_dto(user)), 201
+    result = user_dto(user)
+    if setup_token:
+        result["setup_email_sent"] = mailer.send_account_setup(recipient=user.email, token=setup_token)
+    return jsonify(result), 201
+
+
+@admin_bp.post("/users/<user_id>/send-setup-email")
+@require_platform_admin
+def resend_setup_email(user_id: str):
+    user = g.db.get(PlatformUser, user_id)
+    if user is None:
+        return jsonify({"error": "User not found."}), 404
+    if platform_role(user) != "none" or not user.must_change_password:
+        return jsonify({"error": "This account is not awaiting password setup."}), 400
+    if not mailer.configured() or not os.getenv("PUBLIC_BASE_URL", "").strip():
+        return jsonify({"error": "Account setup email is not configured."}), 503
+    if password_reset.rate_limited(g.db, user_id=user.id, raw_ip=client_ip()):
+        return jsonify({"error": "Too many setup emails. Try again later."}), 429
+    token = password_reset.issue(g.db, user_id=user.id, raw_ip=client_ip())
+    record_audit_event(
+        g.db, action="user.setup_email.request", target_type="platform_user",
+        target_id=user.id, actor_user_id=g.current_user.id,
+        details={"email": user.email},
+    )
+    g.db.commit()
+    sent = mailer.send_account_setup(recipient=user.email, token=token)
+    return jsonify({"sent": sent}), 200 if sent else 502
 
 
 @admin_bp.post("/users/<user_id>/reset-password")

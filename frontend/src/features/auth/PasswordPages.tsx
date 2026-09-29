@@ -58,6 +58,7 @@ export function ForgotPasswordPage() {
 
 export function ResetPasswordPage() {
   const [params] = useSearchParams();
+  const isSetup = params.get("setup") === "1";
   const navigate = useNavigate();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
@@ -72,7 +73,7 @@ export function ResetPasswordPage() {
     setError(null);
     try {
       await api.post("/api/auth/password-reset/confirm", { token, new_password: password });
-      navigate("/login?reset=complete", { replace: true });
+      navigate(isSetup ? "/login?setup=complete" : "/login?reset=complete", { replace: true });
     } catch (err) {
       setError(err instanceof Error ? err.message : "The reset link could not be used.");
     } finally {
@@ -81,7 +82,7 @@ export function ResetPasswordPage() {
   };
 
   return (
-    <AuthCard title="Choose a new password" intro="Use at least 12 characters. This link works only once.">
+    <AuthCard title={isSetup ? "Set up your account" : "Choose a new password"} intro="Choose a private password of at least 12 characters. This link works only once.">
       {!token ? <p className="field__error" role="alert">This reset link is missing its secure token.</p> : (
         <form onSubmit={submit}>
           <PasswordFields password={password} confirm={confirm} setPassword={setPassword} setConfirm={setConfirm} />

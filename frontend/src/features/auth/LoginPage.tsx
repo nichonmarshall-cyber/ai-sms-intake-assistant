@@ -79,7 +79,7 @@ export function LoginPage() {
             {error}
           </p>
         )}
-        {(params.get("reset") === "complete" || params.get("changed") === "complete") && (
+        {(params.get("reset") === "complete" || params.get("changed") === "complete" || params.get("setup") === "complete") && (
           <p className="auth-success" role="status">Your password was updated. Sign in with the new password.</p>
         )}
 
