@@ -349,6 +349,23 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
     });
   };
 
+  const deleteClientAccount = async (user: User) => {
+    const confirmation = window.prompt(
+      `Delete ${user.email} permanently? This removes their login and access to every business. Business leads and conversations remain. Type the full email to confirm:`,
+    );
+    if (confirmation === null) return;
+    if (confirmation.trim().toLowerCase() !== user.email.toLowerCase()) {
+      setActionError("Account deletion canceled: the email did not match.");
+      return;
+    }
+    await runAction(`delete-user-${user.id}`, async () => {
+      await api.delete(`/api/admin/users/${user.id}`, { confirm_email: confirmation });
+      if (selectedUserId === user.id) setSelectedUserId("");
+      setUserNotice(`Deleted ${user.email}. You can now create a new account with that address.`);
+      await users.reload();
+    });
+  };
+
   const createClientUser = async (event: React.FormEvent) => {
     event.preventDefault();
     setUserErrors({});
@@ -654,6 +671,16 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
                   >
                     Remove
                   </button>
+                  {membership.user?.platform_role === "none" && (
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={readOnly || saving === `delete-user-${membership.user_id}`}
+                      onClick={() => void deleteClientAccount(membership.user!)}
+                    >
+                      Delete account
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -685,7 +712,17 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
               <button className="btn btn--primary" disabled={!selectedUserId || saving === `membership-${selectedUserId}`}>
                 Grant access
               </button>
+              {users.data?.items.find((user) => user.id === selectedUserId && user.platform_role === "none") && (
+                <button type="button" className="btn" disabled={saving === `delete-user-${selectedUserId}`}
+                  onClick={() => {
+                    const selected = users.data?.items.find((user) => user.id === selectedUserId);
+                    if (selected) void deleteClientAccount(selected);
+                  }}>
+                  Delete account
+                </button>
+              )}
             </div>
+            <p className="form-hint">Remove takes away access to this business. Delete account removes the login and access to every business.</p>
           </form>}
         </Card>
 

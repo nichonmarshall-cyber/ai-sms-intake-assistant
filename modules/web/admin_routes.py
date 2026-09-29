@@ -10,7 +10,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import Blueprint, g, jsonify, request
-from sqlalchemy import String, cast, func, or_, select
+from sqlalchemy import String, cast, delete, func, or_, select, update
 
 from modules import (
     calendar_service,
@@ -37,8 +37,10 @@ from modules.models import (
     ConversationSession,
     Lead,
     MissedCallEvent,
+    PasswordResetToken,
     PlatformUser,
     ProcessedMessage,
+    UserSession,
 )
 from modules.serializers import (
     appointment_dto,
@@ -672,6 +674,44 @@ def create_user():
     if setup_token:
         result["setup_email_sent"] = mailer.send_account_setup(recipient=user.email, token=setup_token)
     return jsonify(result), 201
+
+
+@admin_bp.delete("/users/<user_id>")
+@require_platform_admin
+def delete_client_user(user_id: str):
+    user = g.db.get(PlatformUser, user_id)
+    if user is None:
+        return jsonify({"error": "User not found."}), 404
+    if user.id == g.current_user.id or platform_role(user) != "none":
+        return jsonify({"error": "Only client accounts can be deleted."}), 403
+
+    payload = request.get_json(silent=True) or {}
+    if (payload.get("confirm_email") or "").strip().lower() != user.email:
+        return jsonify({"error": "Enter the account email to confirm deletion."}), 400
+
+    membership_ids = list(g.db.execute(
+        select(BusinessMembership.business_id).where(BusinessMembership.user_id == user_id)
+    ).scalars())
+    email = user.email
+    # Keep historical business records. Nullable attribution fields lose their
+    # user reference; the immutable audit entry below retains the deletion.
+    for model, column in (
+        (Lead, Lead.archived_by_user_id),
+        (MissedCallEvent, MissedCallEvent.archived_by_user_id),
+        (AppointmentRequest, AppointmentRequest.scheduled_by_user_id),
+        (AuditEvent, AuditEvent.actor_user_id),
+    ):
+        g.db.execute(update(model).where(column == user_id).values({column.key: None}))
+    for model in (BusinessMembership, UserSession, PasswordResetToken):
+        g.db.execute(delete(model).where(model.user_id == user_id))
+    g.db.delete(user)
+    record_audit_event(
+        g.db, action="user.delete", target_type="platform_user",
+        target_id=user_id, actor_user_id=g.current_user.id,
+        details={"email": email, "business_ids": membership_ids},
+    )
+    g.db.commit()
+    return "", 204
 
 
 @admin_bp.post("/users/<user_id>/send-setup-email")
