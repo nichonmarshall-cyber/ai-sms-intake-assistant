@@ -3,10 +3,10 @@ from unittest.mock import patch
 
 from sqlalchemy import select
 
-from modules.auth import passwords
+from modules.auth import mailer, passwords
 from modules.db import session_scope
-from modules.models import PasswordResetToken, PlatformUser, UserSession
-from tests.conftest import auth_headers, login, make_platform_user
+from modules.models import BusinessMembership, PasswordResetToken, PlatformUser, UserSession
+from tests.conftest import auth_headers, login, make_business, make_platform_user
 
 
 PASSWORD = "correct-horse-battery-staple"
@@ -120,3 +120,110 @@ def test_admin_reset_forces_client_change_and_revokes_sessions(demo_app):
         assert all(row.revoked_at is not None for row in live)
     finally:
         db.close()
+
+
+def test_admin_can_create_client_with_one_time_email_setup(demo_app, monkeypatch):
+    business = make_business()
+    admin = make_platform_user(email="admin@ntx.test", password=PASSWORD, platform_role="admin")
+    client, csrf, _ = login(demo_app, admin.email, PASSWORD)
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SMTP_FROM_EMAIL", "support@ntx.test")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://app.ntx.test")
+    sent = {}
+    with patch("modules.web.admin_routes.mailer.send_account_setup", side_effect=lambda **kw: sent.update(kw) or True):
+        response = client.post(
+            "/api/admin/users",
+            json={"email": "new@client.test", "business_id": business.id,
+                  "tenant_role": "owner", "setup_method": "email", "platform_role": "none"},
+            headers=auth_headers(csrf),
+        )
+    assert response.status_code == 201
+    assert response.get_json()["setup_email_sent"] is True
+    assert sent["recipient"] == "new@client.test"
+    assert "token" not in str(response.get_json()).lower()
+
+    db = session_scope()
+    try:
+        user = db.execute(select(PlatformUser).where(PlatformUser.email == "new@client.test")).scalar_one()
+        membership = db.execute(select(BusinessMembership).where(BusinessMembership.user_id == user.id)).scalar_one()
+        assert membership.business_id == business.id
+        assert user.must_change_password is True
+    finally:
+        db.close()
+
+    confirmed = demo_app.app.test_client().post(
+        "/api/auth/password-reset/confirm",
+        json={"token": sent["token"], "new_password": NEW_PASSWORD},
+    )
+    assert confirmed.status_code == 200
+    assert login(demo_app, "new@client.test", NEW_PASSWORD)[2].status_code == 200
+    assert demo_app.app.test_client().post(
+        "/api/auth/password-reset/confirm",
+        json={"token": sent["token"], "new_password": PASSWORD},
+    ).status_code == 400
+
+
+def test_temporary_creation_and_failed_setup_email_recovery(demo_app, monkeypatch):
+    business = make_business()
+    admin = make_platform_user(email="admin@ntx.test", password=PASSWORD, platform_role="admin")
+    client, csrf, _ = login(demo_app, admin.email, PASSWORD)
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SMTP_FROM_EMAIL", "support@ntx.test")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://app.ntx.test")
+
+    temporary = client.post(
+        "/api/admin/users",
+        json={"email": "temp@client.test", "business_id": business.id,
+              "tenant_role": "viewer", "setup_method": "temporary", "password": PASSWORD},
+        headers=auth_headers(csrf),
+    )
+    assert temporary.status_code == 201
+    assert temporary.get_json()["requires_credential_change"] is True
+    temp_client, _, _ = login(demo_app, "temp@client.test", PASSWORD)
+    assert temp_client.get(f"/api/dashboard/businesses/{business.id}/navigation").status_code == 403
+
+    with patch("modules.web.admin_routes.mailer.send_account_setup", return_value=False):
+        failed = client.post(
+            "/api/admin/users",
+            json={"email": "retry@client.test", "business_id": business.id,
+                  "setup_method": "email"},
+            headers=auth_headers(csrf),
+        )
+    assert failed.status_code == 201
+    assert failed.get_json()["setup_email_sent"] is False
+    with patch("modules.web.admin_routes.mailer.send_account_setup", return_value=True) as mail:
+        retried = client.post(
+            f"/api/admin/users/{failed.get_json()['id']}/send-setup-email",
+            json={}, headers=auth_headers(csrf),
+        )
+    assert retried.status_code == 200
+    assert retried.get_json()["sent"] is True
+    mail.assert_called_once()
+
+
+def test_client_cannot_send_account_setup_email(demo_app):
+    client_user = make_platform_user(email="client@ntx.test", password=PASSWORD, platform_role="none")
+    client, csrf, _ = login(demo_app, client_user.email, PASSWORD)
+    response = client.post(
+        f"/api/admin/users/{client_user.id}/send-setup-email",
+        json={}, headers=auth_headers(csrf),
+    )
+    assert response.status_code == 403
+
+
+def test_setup_email_contains_single_use_link_to_account_setup(monkeypatch):
+    monkeypatch.setenv("SMTP_HOST", "smtp.example.test")
+    monkeypatch.setenv("SMTP_FROM_EMAIL", "support@ntx.test")
+    monkeypatch.setenv("SMTP_USERNAME", "support@ntx.test")
+    monkeypatch.setenv("SMTP_PASSWORD", "test-app-password")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://app.ntx.test")
+    monkeypatch.setenv("SMTP_USE_TLS", "true")
+    with patch("modules.auth.mailer.smtplib.SMTP") as smtp:
+        assert mailer.send_account_setup(recipient="new@client.test", token="secret-setup-token")
+    message = smtp.return_value.__enter__.return_value.send_message.call_args.args[0]
+    assert message["Subject"] == "Set up your NTX dashboard account"
+    assert message["From"] == "support@ntx.test"
+    assert message["To"] == "new@client.test"
+    assert "https://app.ntx.test/reset-password?token=secret-setup-token&setup=1" in message.get_content()
+    assert "expires in 30 minutes" in message.get_content()
+    smtp.return_value.__enter__.return_value.starttls.assert_called_once()

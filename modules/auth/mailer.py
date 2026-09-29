@@ -16,27 +16,46 @@ def configured() -> bool:
 
 
 def send_password_reset(*, recipient: str, token: str) -> bool:
+    return _send_password_link(recipient=recipient, token=token, setup=False)
+
+
+def send_account_setup(*, recipient: str, token: str) -> bool:
+    return _send_password_link(recipient=recipient, token=token, setup=True)
+
+
+def _send_password_link(*, recipient: str, token: str, setup: bool) -> bool:
+    purpose = "Account setup" if setup else "Password reset"
     if not configured():
-        logger.warning("[auth] Password reset requested but SMTP is not configured.")
+        logger.warning("[auth] %s requested but SMTP is not configured.", purpose)
         return False
 
     base_url = os.getenv("PUBLIC_BASE_URL", "").strip().rstrip("/")
     if not base_url:
-        logger.warning("[auth] Password reset requested but PUBLIC_BASE_URL is not configured.")
+        logger.warning("[auth] %s requested but PUBLIC_BASE_URL is not configured.", purpose)
         return False
     if os.getenv("FLASK_ENV", "development").strip().lower() == "production" and not base_url.startswith("https://"):
-        logger.error("[auth] Refusing to send a production reset link over a non-HTTPS base URL.")
+        logger.error("[auth] Refusing to send a production %s link over a non-HTTPS base URL.", purpose.lower())
         return False
-    link = f"{base_url}/reset-password?{urlencode({'token': token})}"
+    query = {"token": token}
+    if setup:
+        query["setup"] = "1"
+    link = f"{base_url}/reset-password?{urlencode(query)}"
 
     message = EmailMessage()
-    message["Subject"] = "Reset your NTX dashboard password"
+    message["Subject"] = (
+        "Set up your NTX dashboard account" if setup else "Reset your NTX dashboard password"
+    )
     message["From"] = os.environ["SMTP_FROM_EMAIL"].strip()
     message["To"] = recipient
+    intro = (
+        "You have been invited to the NTX Automation Co. dashboard. Use the secure link "
+        "below to choose your password. "
+        if setup
+        else "Use the secure link below to reset your NTX Automation Co. dashboard password. "
+    )
     message.set_content(
-        "Use the secure link below to reset your NTX Automation Co. dashboard password. "
-        "The link expires in 30 minutes and works once.\n\n"
-        f"{link}\n\nIf you did not request this, you can ignore this email."
+        intro + "The link expires in 30 minutes and works once.\n\n"
+        f"{link}\n\nIf you did not expect this email, you can ignore it."
     )
 
     try:
@@ -53,5 +72,5 @@ def send_password_reset(*, recipient: str, token: str) -> bool:
             smtp.send_message(message)
         return True
     except Exception:
-        logger.exception("[auth] SMTP password reset delivery failed.")
+        logger.exception("[auth] SMTP %s delivery failed.", purpose.lower())
         return False

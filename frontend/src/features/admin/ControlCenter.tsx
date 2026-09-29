@@ -277,6 +277,8 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
   const [newUserName, setNewUserName] = useState("");
   const [newUserEmail, setNewUserEmail] = useState("");
   const [newUserPassword, setNewUserPassword] = useState("");
+  const [newUserSetupMethod, setNewUserSetupMethod] = useState<"email" | "temporary">("email");
+  const [userNotice, setUserNotice] = useState<string | null>(null);
   const [newUserRole, setNewUserRole] = useState("owner");
   const [userErrors, setUserErrors] = useState<Record<string, string>>({});
   const [websiteUrl, setWebsiteUrl] = useState("");
@@ -351,17 +353,22 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
     setUserErrors({});
     setSaving("create-user");
     setActionError(null);
+    setUserNotice(null);
     try {
-      const user = await api.post<User>("/api/admin/users", {
+      const user = await api.post<User & { setup_email_sent?: boolean }>("/api/admin/users", {
         display_name: newUserName,
         email: newUserEmail,
-        password: newUserPassword,
+        password: newUserSetupMethod === "temporary" ? newUserPassword : undefined,
         platform_role: "none",
+        business_id: businessId,
+        tenant_role: newUserRole,
+        setup_method: newUserSetupMethod,
       });
-      await api.post(`/api/admin/businesses/${businessId}/memberships`, {
-        user_id: user.id,
-        role: newUserRole,
-      });
+      setUserNotice(newUserSetupMethod === "email"
+        ? user.setup_email_sent
+          ? `Setup link sent to ${user.email}. It expires in 30 minutes.`
+          : `Account created, but the setup email could not be sent to ${user.email}. Check the mail settings and use Send setup email below.`
+        : `Account created for ${user.email}. Share the temporary password privately.`);
       setNewUserName("");
       setNewUserEmail("");
       setNewUserPassword("");
@@ -611,6 +618,19 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
                   >
                     Reset password
                   </button>
+                  {membership.user?.requires_credential_change && (
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={readOnly || saving === `setup-${membership.user_id}`}
+                      onClick={() => void runAction(`setup-${membership.user_id}`, async () => {
+                        await api.post(`/api/admin/users/${membership.user_id}/send-setup-email`, {});
+                        setUserNotice(`New setup link sent to ${membership.user?.email}.`);
+                      })}
+                    >
+                      Send setup email
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="btn"
@@ -667,9 +687,17 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
             <Field label="Email" id="client-user-email" error={userErrors.email}>
               <input id="client-user-email" className="input" type="email" value={newUserEmail} onChange={(event) => setNewUserEmail(event.target.value)} />
             </Field>
-            <Field label="Temporary password" id="client-user-password" error={userErrors.password}>
-              <input id="client-user-password" className="input" type="password" value={newUserPassword} onChange={(event) => setNewUserPassword(event.target.value)} />
+            <Field label="Account setup" id="client-user-setup">
+              <select id="client-user-setup" className="input" value={newUserSetupMethod} onChange={(event) => setNewUserSetupMethod(event.target.value as "email" | "temporary")}>
+                <option value="email">Send secure setup email</option>
+                <option value="temporary">Use temporary password</option>
+              </select>
             </Field>
+            {newUserSetupMethod === "temporary" && (
+              <Field label="Temporary password" id="client-user-password" error={userErrors.password}>
+                <input id="client-user-password" className="input" type="password" value={newUserPassword} onChange={(event) => setNewUserPassword(event.target.value)} />
+              </Field>
+            )}
             <Field label="Tenant role" id="client-user-role">
               <select id="client-user-role" className="input" value={newUserRole} onChange={(event) => setNewUserRole(event.target.value)}>
                 <option value="owner">Owner</option>
@@ -679,7 +707,8 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
               </select>
             </Field>
             <button className="btn btn--primary" disabled={saving === "create-user"}>Create and grant access</button>
-            <p className="form-hint">The temporary password must be replaced before this user can open dashboard data.</p>
+            <p className="form-hint">Email links work once and expire in 30 minutes. Temporary passwords must be replaced before dashboard access.</p>
+            {userNotice && <p className="auth-success" role="status">{userNotice}</p>}
           </form>
         </Card>}
       </div>
