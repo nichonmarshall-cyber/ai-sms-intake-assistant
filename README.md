@@ -90,6 +90,30 @@ Natural-language preferences such as “Friday morning” remain pending. The
 dashboard requires the business to choose an exact date and time, so intake
 never claims that a preference is a confirmed appointment.
 
+### Reviews and Local SEO
+
+These modules are enabled per business in **Control Center → Businesses →
+business → Module entitlements**. In the same business screen, **Google
+visibility** stores the exact Search Console property (`sc-domain:example.com`
+or a URL-prefix property), the verified Business Profile location resource
+(`accounts/123/locations/456`), and an optional Google listing link. No Google
+credentials are stored in a tenant record.
+
+For Local SEO, enable the Search Console API in Google Cloud and grant the
+service account in `GOOGLE_SERVICE_ACCOUNT_JSON` access to that exact Search
+Console property. The dashboard reports finalized web-search clicks,
+impressions, CTR, average position, and top queries for the last 28 finalized
+days. These are website search results, not map-pack rankings.
+
+For Reviews, obtain approval for the Google Business Profile APIs, configure
+`GOOGLE_BUSINESS_CLIENT_ID`, `GOOGLE_BUSINESS_CLIENT_SECRET`, and
+`GOOGLE_BUSINESS_REFRESH_TOKEN` as server secrets, and ensure that Google
+account manages the configured verified location. The token needs the
+`business.manage` scope. The dashboard reads the average rating, total count,
+and 20 most recently updated reviews. Until access is connected, the client
+sees a connection state rather than invented metrics. The integration is
+read-only and does not reply to reviews.
+
 ---
 
 ## Setup

@@ -15,6 +15,7 @@ from sqlalchemy import String, cast, delete, func, or_, select, update
 from modules import (
     calendar_service,
     entitlements,
+    google_visibility,
     missed_call as missed_call_service,
     twilio_usage,
     website_monitoring,
@@ -294,6 +295,7 @@ def get_business(business_id: str):
         {
             "business": business_dto(business, module_keys=sorted(enabled)),
             "website": (business.settings or {}).get("website") or {"url": "", "monitor_id": ""},
+            "google_visibility": (business.settings or {}).get("google_visibility") or {},
             "phone_numbers": [phone_number_dto(n) for n in numbers],
             "memberships": [
                 membership_dto(m, user=g.db.get(PlatformUser, m.user_id)) for m in memberships
@@ -400,6 +402,35 @@ def update_business_website(business_id: str):
     )
     g.db.commit()
     return jsonify(settings["website"]), 200
+
+
+@admin_bp.patch("/businesses/<business_id>/google-visibility")
+@require_platform_admin
+def update_google_visibility(business_id: str):
+    business = g.db.get(Business, business_id)
+    if business is None:
+        return jsonify({"error": "Business not found."}), 404
+    payload = request.get_json(silent=True) or {}
+    fields = {}
+    clean = {}
+    for key, validator in (("search_property", google_visibility.validate_property),
+                           ("profile_location", google_visibility.validate_location),
+                           ("profile_url", google_visibility.validate_profile_url)):
+        try:
+            clean[key] = validator(str(payload.get(key) or ""))
+        except ValueError as exc:
+            fields[key] = str(exc)
+    if fields:
+        return jsonify({"error": "Validation failed.", "fields": fields}), 400
+    settings = dict(business.settings or {})
+    settings["google_visibility"] = clean
+    business.settings = settings
+    record_audit_event(g.db, action="business.google_visibility.update",
+                       target_type="business", target_id=business_id,
+                       business_id=business_id, actor_user_id=g.current_user.id,
+                       details=clean)
+    g.db.commit()
+    return jsonify(clean), 200
 
 
 @admin_bp.get("/websites")

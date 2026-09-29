@@ -64,18 +64,20 @@ Password recovery email is strongly recommended before inviting a client:
 | `SMTP_FROM_EMAIL` | A verified sender such as `dashboard@ntxautomationco.com` |
 | `SMTP_USE_TLS` | `true` |
 
-Optional, only if enabling Sheets export:
+Optional Google integrations (configure only the ones you enable):
 
 | Variable | Value |
 |---|---|
 | `GOOGLE_SERVICE_ACCOUNT_JSON` | path to a mounted service-account JSON (see note below) |
+| `GOOGLE_BUSINESS_CLIENT_ID` | OAuth client ID for an approved Business Profile API project, when using Reviews |
+| `GOOGLE_BUSINESS_CLIENT_SECRET` | OAuth client secret; store only in Render Environment |
+| `GOOGLE_BUSINESS_REFRESH_TOKEN` | OAuth refresh token with `business.manage` scope for the managed locations |
 | `GOOGLE_SHEET_ID` | your sheet ID |
 | `SHEETS_ENABLED` | `true` |
 
-> Google service-account JSON is a file, not an env var. Either use
-> Render's **Secret Files** feature to mount it at a fixed path and point
-> `GOOGLE_SERVICE_ACCOUNT_JSON` at that path, or leave `SHEETS_ENABLED=false`
-> (default) -- leads remain fully safe in Postgres either way.
+> `GOOGLE_SERVICE_ACCOUNT_JSON` accepts a mounted secret file path or the
+> complete JSON document stored as a secret environment value. Do not commit
+> the key or OAuth credentials. Sheets remains optional.
 
 Everything else (`APP_MODE=demo`, `ENABLED_PROFILES`, `SESSION_TTL_MINUTES`,
 `DEFAULT_TIMEZONE`, `FLASK_ENV=production`, `TWILIO_VALIDATION_BYPASS=false`,

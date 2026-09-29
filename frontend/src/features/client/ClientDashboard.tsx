@@ -28,6 +28,7 @@ import { AIIntake } from "./AIIntake";
 import { Appointments } from "./Appointments";
 import { Analytics } from "./Analytics";
 import { Website } from "./Website";
+import { LocalSEO, Reviews } from "./GoogleVisibility";
 
 interface OverviewPayload {
   enabled_modules: NavModule[];
@@ -712,6 +713,8 @@ export function ClientDashboardRoutes({
       <Route path="ai_intake" element={<AIIntake businessId={businessId} readOnly={readOnly} />} />
       <Route path="analytics" element={<Analytics businessId={businessId} />} />
       <Route path="website" element={<Website businessId={businessId} />} />
+      <Route path="local_seo" element={<LocalSEO businessId={businessId} />} />
+      <Route path="reviews" element={<Reviews businessId={businessId} />} />
       <Route path="settings" element={<Settings businessId={businessId} readOnly={readOnly} />} />
       {modules
         .filter((module) => !module.implemented)
