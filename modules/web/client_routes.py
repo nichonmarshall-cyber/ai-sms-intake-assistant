@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from collections import Counter
 from datetime import datetime, timedelta, timezone
+import os
+import logging
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import Integer, String, cast, func, or_, select
 
-from modules import calendar_service, entitlements, website_monitoring
+from modules import calendar_service, entitlements, google_visibility, website_monitoring
 from modules.auth.decorators import require_business_access, require_module
 from modules.models import AppointmentRequest, Business, ConversationSession, Lead, MissedCallEvent
 from modules.serializers import (
@@ -23,6 +25,7 @@ from modules.serializers import (
 from modules.tenancy import record_audit_event
 
 client_bp = Blueprint("client", __name__, url_prefix="/api/dashboard")
+logger = logging.getLogger(__name__)
 
 LEAD_WORKFLOW_STATUSES = {"new", "qualified", "needs_review", "scheduled", "closed"}
 CONVERSATION_STATES = {"awaiting_profile_selection", "in_progress", "completed", "terminated"}
@@ -91,6 +94,42 @@ def website_health(business_id: str):
     """Return only the authenticated tenant's attached website monitor."""
     business = g.db.get(Business, business_id)
     return jsonify(_website_health_payload(business)), 200
+
+
+@client_bp.get("/businesses/<business_id>/local-seo")
+@require_business_access()
+@require_module("local_seo")
+def local_seo(business_id: str):
+    business = g.db.get(Business, business_id)
+    property_url = ((business.settings or {}).get("google_visibility") or {}).get("search_property") or ""
+    if not property_url or not os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip():
+        return jsonify({"status": "not_connected", "property": property_url, "data": None}), 200
+    try:
+        return jsonify({"status": "connected", "property": property_url,
+                        "data": google_visibility.search_console(property_url)}), 200
+    except Exception:
+        logger.exception("Search Console unavailable for business %s", business_id)
+        return jsonify({"status": "unavailable", "property": property_url, "data": None}), 200
+
+
+@client_bp.get("/businesses/<business_id>/reviews")
+@require_business_access()
+@require_module("reviews")
+def business_reviews(business_id: str):
+    business = g.db.get(Business, business_id)
+    config = (business.settings or {}).get("google_visibility") or {}
+    location = config.get("profile_location") or ""
+    profile_url = config.get("profile_url") or ""
+    configured = all(os.getenv(key, "").strip() for key in
+                     ("GOOGLE_BUSINESS_CLIENT_ID", "GOOGLE_BUSINESS_CLIENT_SECRET", "GOOGLE_BUSINESS_REFRESH_TOKEN"))
+    if not location or not configured:
+        return jsonify({"status": "not_connected", "profile_url": profile_url, "data": None}), 200
+    try:
+        return jsonify({"status": "connected", "profile_url": profile_url,
+                        "data": google_visibility.reviews(location)}), 200
+    except Exception:
+        logger.exception("Business Profile reviews unavailable for business %s", business_id)
+        return jsonify({"status": "unavailable", "profile_url": profile_url, "data": None}), 200
 
 
 @client_bp.get("/businesses/<business_id>/overview")

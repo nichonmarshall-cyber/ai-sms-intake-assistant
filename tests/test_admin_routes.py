@@ -11,6 +11,10 @@ from modules.models import (
     ConversationSession,
     Lead,
     MissedCallEvent,
+    PasswordResetToken,
+    PlatformUser,
+    UserSession,
+    BusinessMembership,
 )
 from tests.conftest import (
     auth_headers,
@@ -233,6 +237,61 @@ def test_admin_can_revoke_another_users_sessions(demo_app):
     assert response.status_code == 200
     assert response.get_json()["revoked"] == 1
     assert victim_client.get("/api/auth/me").status_code == 401
+
+
+def test_delete_client_account_clears_access_and_credentials_but_keeps_business_data(demo_app):
+    first = make_business(name="First", slug="first-delete")
+    second = make_business(name="Second", slug="second-delete")
+    victim = make_platform_user(email="retry@client.test", password=PASSWORD, platform_role="none")
+    make_membership(first.id, victim.id)
+    make_membership(second.id, victim.id)
+    victim_client, victim_csrf, _ = login(demo_app, victim.email, PASSWORD)
+    db = session_scope()
+    try:
+        db.add(Lead(business_id=first.id, phone="+18175550101", profile_key="roofing",
+                    fields={}, status="active", workflow_status="new", is_complete=False))
+        db.add(PasswordResetToken(user_id=victim.id, token_hash="a" * 64,
+                                  expires_at=datetime.now(timezone.utc) + timedelta(minutes=30)))
+        db.commit()
+    finally:
+        db.close()
+
+    admin, csrf, _ = _admin(demo_app)
+    path = f"/api/admin/users/{victim.id}"
+    headers = auth_headers(csrf)
+    assert admin.delete(path, json={"confirm_email": "wrong@client.test"}, headers=headers).status_code == 400
+    assert victim_client.delete(path, json={"confirm_email": victim.email},
+                                headers=auth_headers(victim_csrf)).status_code == 403
+    assert admin.delete(path, json={"confirm_email": victim.email.upper()}, headers=headers).status_code == 204
+    assert victim_client.get("/api/auth/me").status_code == 401
+    db = session_scope()
+    try:
+        assert db.get(PlatformUser, victim.id) is None
+        assert not db.execute(select(BusinessMembership).where(BusinessMembership.user_id == victim.id)).first()
+        assert not db.execute(select(UserSession).where(UserSession.user_id == victim.id)).first()
+        assert not db.execute(select(PasswordResetToken).where(PasswordResetToken.user_id == victim.id)).first()
+        assert db.execute(select(Lead).where(Lead.business_id == first.id)).first()
+        event = db.execute(select(AuditEvent).where(AuditEvent.action == "user.delete")).scalar_one()
+        assert event.details["email"] == victim.email
+        assert set(event.details["business_ids"]) == {first.id, second.id}
+    finally:
+        db.close()
+    assert admin.post("/api/admin/users", json={"email": victim.email, "password": PASSWORD},
+                      headers=headers).status_code == 201
+
+
+def test_delete_account_rejects_platform_admin_and_staff(demo_app):
+    admin, csrf, _ = _admin(demo_app)
+    db = session_scope()
+    try:
+        admin_user = db.execute(select(PlatformUser).where(PlatformUser.email == "admin@ntx.test")).scalar_one()
+    finally:
+        db.close()
+    staff = make_platform_user(email="staff@ntx.test", platform_role="staff")
+    for user in (admin_user, staff):
+        response = admin.delete(f"/api/admin/users/{user.id}",
+                                json={"confirm_email": user.email}, headers=auth_headers(csrf))
+        assert response.status_code == 403
 
 
 def test_platform_overview_declares_what_it_cannot_measure(demo_app):

@@ -257,6 +257,7 @@ interface BusinessDetailPayload {
   modules: ModuleEntitlement[];
   counts: { leads: number; missed_calls: number };
   website: { url: string; monitor_id: string };
+  google_visibility: { search_property?: string; profile_location?: string; profile_url?: string };
 }
 
 function BusinessDetail({ readOnly }: { readOnly: boolean }) {
@@ -285,11 +286,18 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [monitorId, setMonitorId] = useState("");
   const [websiteErrors, setWebsiteErrors] = useState<Record<string, string>>({});
+  const [searchProperty, setSearchProperty] = useState("");
+  const [profileLocation, setProfileLocation] = useState("");
+  const [profileUrl, setProfileUrl] = useState("");
+  const [googleErrors, setGoogleErrors] = useState<Record<string, string>>({});
 
   useEffect(() => {
     if (data) {
       setWebsiteUrl(data.website.url || "");
       setMonitorId(data.website.monitor_id || "");
+      setSearchProperty(data.google_visibility.search_property || "");
+      setProfileLocation(data.google_visibility.profile_location || "");
+      setProfileUrl(data.google_visibility.profile_url || "");
     }
   }, [data]);
 
@@ -349,6 +357,23 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
     });
   };
 
+  const deleteClientAccount = async (user: User) => {
+    const confirmation = window.prompt(
+      `Delete ${user.email} permanently? This removes their login and access to every business. Business leads and conversations remain. Type the full email to confirm:`,
+    );
+    if (confirmation === null) return;
+    if (confirmation.trim().toLowerCase() !== user.email.toLowerCase()) {
+      setActionError("Account deletion canceled: the email did not match.");
+      return;
+    }
+    await runAction(`delete-user-${user.id}`, async () => {
+      await api.delete(`/api/admin/users/${user.id}`, { confirm_email: confirmation });
+      if (selectedUserId === user.id) setSelectedUserId("");
+      setUserNotice(`Deleted ${user.email}. You can now create a new account with that address.`);
+      await users.reload();
+    });
+  };
+
   const createClientUser = async (event: React.FormEvent) => {
     event.preventDefault();
     setUserErrors({});
@@ -404,6 +429,25 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
       const apiErr = err as { fields?: Record<string, string>; message?: string };
       setWebsiteErrors(apiErr.fields ?? {});
       setActionError(apiErr.message ?? "Could not save the website monitor.");
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const saveGoogle = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setGoogleErrors({});
+    setSaving("google");
+    setActionError(null);
+    try {
+      await api.patch(`/api/admin/businesses/${businessId}/google-visibility`, {
+        search_property: searchProperty, profile_location: profileLocation, profile_url: profileUrl,
+      });
+      await reload();
+    } catch (err) {
+      const apiErr = err as { fields?: Record<string, string>; message?: string };
+      setGoogleErrors(apiErr.fields ?? {});
+      setActionError(apiErr.message ?? "Could not save Google visibility settings.");
     } finally {
       setSaving(null);
     }
@@ -485,6 +529,16 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
             <input id="business-monitor-id" className="input" value={monitorId} placeholder="123456789" disabled={readOnly} onChange={(event) => setMonitorId(event.target.value)} />
           </Field>
           <button className="btn btn--primary inline-form-grid__button" disabled={readOnly || saving === "website"}>Save website</button>
+        </form>
+      </Card>
+
+      <Card title="Google visibility">
+        <p className="management-copy">Connect the exact Search Console property and verified Business Profile location for this tenant. Google credentials are configured on the server, never entered here.</p>
+        <form className="inline-form-grid" onSubmit={saveGoogle} noValidate>
+          <Field label="Search Console property" id="search-property" error={googleErrors.search_property}><input id="search-property" className="input" value={searchProperty} placeholder="sc-domain:example.com" disabled={readOnly} onChange={(event) => setSearchProperty(event.target.value)} /></Field>
+          <Field label="Business Profile location" id="profile-location" error={googleErrors.profile_location}><input id="profile-location" className="input" value={profileLocation} placeholder="accounts/123/locations/456" disabled={readOnly} onChange={(event) => setProfileLocation(event.target.value)} /></Field>
+          <Field label="Google listing link" id="profile-url" error={googleErrors.profile_url}><input id="profile-url" className="input" value={profileUrl} placeholder="https://maps.google.com/..." disabled={readOnly} onChange={(event) => setProfileUrl(event.target.value)} /></Field>
+          <button className="btn btn--primary inline-form-grid__button" disabled={readOnly || saving === "google"}>Save Google settings</button>
         </form>
       </Card>
 
@@ -654,6 +708,16 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
                   >
                     Remove
                   </button>
+                  {membership.user?.platform_role === "none" && (
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={readOnly || saving === `delete-user-${membership.user_id}`}
+                      onClick={() => void deleteClientAccount(membership.user!)}
+                    >
+                      Delete account
+                    </button>
+                  )}
                 </div>
               ))}
             </div>
@@ -685,7 +749,17 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
               <button className="btn btn--primary" disabled={!selectedUserId || saving === `membership-${selectedUserId}`}>
                 Grant access
               </button>
+              {users.data?.items.find((user) => user.id === selectedUserId && user.platform_role === "none") && (
+                <button type="button" className="btn" disabled={saving === `delete-user-${selectedUserId}`}
+                  onClick={() => {
+                    const selected = users.data?.items.find((user) => user.id === selectedUserId);
+                    if (selected) void deleteClientAccount(selected);
+                  }}>
+                  Delete account
+                </button>
+              )}
             </div>
+            <p className="form-hint">Remove takes away access to this business. Delete account removes the login and access to every business.</p>
           </form>}
         </Card>
 
