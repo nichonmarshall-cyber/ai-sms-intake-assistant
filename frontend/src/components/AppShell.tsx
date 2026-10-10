@@ -66,10 +66,13 @@ export function AppShell({
         aria-label="Primary"
         id="primary-navigation"
       >
-        <div className="brand">
-          <span className="brand__mark">NTX</span>
-          <span className="brand__sub">Automation Co.</span>
-        </div>
+        <Link className="brand" to="/" aria-label="NTX Automation Co. dashboard home">
+          <img
+            className="brand__logo"
+            src="/assets/ntx-logo-lockup.png"
+            alt="NTX Automation Co."
+          />
+        </Link>
 
         {sections.map((section) => (
           <div className="nav" key={section.heading}>
@@ -134,7 +137,14 @@ export function AppShell({
             </Link>
           )}
           <div className="topbar__user">
-            <span>{me?.user.display_name ?? me?.user.email}</span>
+            <span className="topbar__avatar" aria-hidden="true">
+              {(me?.user.display_name ?? me?.user.email ?? "NTX")
+                .split(/\s+/)
+                .slice(0, 2)
+                .map((part) => part[0]?.toUpperCase())
+                .join("")}
+            </span>
+            <span className="topbar__identity">{me?.user.display_name ?? me?.user.email}</span>
             <button type="button" className="btn" onClick={handleLogout}>
               Sign out
             </button>
