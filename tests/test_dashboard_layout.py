@@ -21,7 +21,7 @@ def test_layout_normalization_preserves_only_known_overview_widgets():
         {
             "order": ["appointments", "not-real", "stats"],
             "visible": {"appointments": False, "not-real": True},
-            "services_position": "left",
+            "services_position": "top",
             "sizes": {"appointments": "wide", "stats": "not-real", "bogus": "wide"},
         },
         {"overview", "appointments", "settings"},
@@ -30,7 +30,7 @@ def test_layout_normalization_preserves_only_known_overview_widgets():
     assert layout["order"] == ["appointments", "stats", "recent_leads", "recent_conversations"]
     assert layout["visible"]["appointments"] is False
     assert layout["visible"]["stats"] is True
-    assert layout["services_position"] == "left"
+    assert layout["services_position"] == "top"
     assert layout["sizes"] == {
         "stats": "wide",
         "recent_leads": "standard",

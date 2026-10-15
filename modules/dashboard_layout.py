@@ -23,6 +23,7 @@ OVERVIEW_WIDGETS = (
 MAIN_OVERVIEW_WIDGETS = OVERVIEW_WIDGETS[:-1]
 DEFAULT_OVERVIEW_ORDER = list(MAIN_OVERVIEW_WIDGETS)
 DEFAULT_SERVICES_POSITION = "right"
+SERVICES_POSITIONS = ("top", "right", "bottom", "left")
 WIDGET_SIZES = ("standard", "wide")
 DEFAULT_WIDGET_SIZES = {
     "stats": "wide",
@@ -66,7 +67,7 @@ def normalize_overview_layout(raw: object, enabled_modules: set[str]) -> dict[st
         for key in OVERVIEW_WIDGETS
     }
     position = source.get("services_position")
-    services_position = position if position in {"left", "right"} else DEFAULT_SERVICES_POSITION
+    services_position = position if position in SERVICES_POSITIONS else DEFAULT_SERVICES_POSITION
 
     raw_sizes = source.get("sizes")
     size_source = raw_sizes if isinstance(raw_sizes, dict) else {}

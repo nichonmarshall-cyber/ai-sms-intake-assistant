@@ -66,11 +66,12 @@ interface OverviewPayload {
 type OverviewWidgetKey = "stats" | "recent_leads" | "appointments" | "recent_conversations" | "services";
 type MainOverviewWidgetKey = Exclude<OverviewWidgetKey, "services">;
 type OverviewWidgetSize = "standard" | "wide";
+type ServicesPosition = "top" | "right" | "bottom" | "left";
 
 interface OverviewLayout {
   order: MainOverviewWidgetKey[];
   visible: Record<OverviewWidgetKey, boolean>;
-  services_position: "left" | "right";
+  services_position: ServicesPosition;
   sizes: Record<MainOverviewWidgetKey, OverviewWidgetSize>;
   available_widgets: OverviewWidgetKey[];
 }
@@ -524,10 +525,10 @@ function Overview({ businessId, modules, readOnly }: { businessId: string; modul
     });
   };
 
-  const moveServicesRail = () => {
+  const setServicesPosition = (servicesPosition: ServicesPosition) => {
     setDraftLayout((current) => current ? {
       ...current,
-      services_position: current.services_position === "left" ? "right" : "left",
+      services_position: servicesPosition,
     } : current);
   };
 
@@ -672,14 +673,25 @@ function Overview({ businessId, modules, readOnly }: { businessId: string; modul
   };
 
   const servicesOnLeft = layout.services_position === "left";
+  const servicesOnTop = layout.services_position === "top";
+  const servicesBeforeMain = servicesOnLeft || servicesOnTop;
   const services = data && widgetVisible("services") && summaryModules.length > 0 ? (
     <aside className="overview-services overview-dashboard__services" aria-labelledby="your-services">
       <div className="overview-section-heading">
         <div><h2 id="your-services">Your services</h2><p>Only the modules enabled for this business appear here.</p></div>
         {editingLayout && (
-          <button className="btn btn--small" type="button" onClick={moveServicesRail} disabled={savingLayout}>
-            Move {servicesOnLeft ? "right" : "left"}
-          </button>
+          <select
+            className="input overview-services__position"
+            aria-label="Services position"
+            value={layout.services_position}
+            disabled={savingLayout}
+            onChange={(event) => setServicesPosition(event.target.value as ServicesPosition)}
+          >
+            <option value="top">Top</option>
+            <option value="right">Right side</option>
+            <option value="bottom">Bottom</option>
+            <option value="left">Left side</option>
+          </select>
         )}
       </div>
       <div className="overview-module-grid overview-module-grid--rail">
@@ -698,8 +710,8 @@ function Overview({ businessId, modules, readOnly }: { businessId: string; modul
       {loading && <Loading rows={3} />}
       {error && <ErrorState body={error} />}
       {data && (
-        <div className={`overview-dashboard${services ? "" : " overview-dashboard--no-services"}${servicesOnLeft ? " overview-dashboard--services-left" : ""}`}>
-          {servicesOnLeft && services}
+        <div className={`overview-dashboard${services ? "" : " overview-dashboard--no-services"}${servicesOnLeft ? " overview-dashboard--services-left" : ""}${servicesOnTop ? " overview-dashboard--services-top" : ""}${layout.services_position === "bottom" ? " overview-dashboard--services-bottom" : ""}`}>
+          {servicesBeforeMain && services}
           <main className="overview-dashboard__main">
             <section className="overview-live-feed" aria-labelledby="live-business-feed">
               <div className="overview-section-heading">
@@ -796,7 +808,7 @@ function Overview({ businessId, modules, readOnly }: { businessId: string; modul
               )}
             </section>
           </main>
-          {!servicesOnLeft && services}
+          {!servicesBeforeMain && services}
         </div>
       )}
     </>
@@ -999,9 +1011,11 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
                     aria-label="Services rail position"
                     value={overviewLayout.services_position}
                     disabled={readOnly || savingLayout || !overviewLayout.visible.services}
-                    onChange={(event) => setOverviewLayout((current) => ({ ...current, services_position: event.target.value as "left" | "right" }))}
+                    onChange={(event) => setOverviewLayout((current) => ({ ...current, services_position: event.target.value as ServicesPosition }))}
                   >
+                    <option value="top">Top</option>
                     <option value="right">Right side</option>
+                    <option value="bottom">Bottom</option>
                     <option value="left">Left side</option>
                   </select>
                 </div>
