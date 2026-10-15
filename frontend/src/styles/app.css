@@ -1471,12 +1471,34 @@
   border-radius: var(--radius-sm);
   background: var(--ntx-elevated);
 }
+.dashboard-layout-row--draggable {
+  cursor: grab;
+}
+.dashboard-layout-row--draggable:active,
+.dashboard-layout-row--dragging {
+  cursor: grabbing;
+}
+.dashboard-layout-row--dragging {
+  opacity: 0.5;
+}
+.dashboard-layout-row--drop-target {
+  border-color: var(--ntx-orange);
+  box-shadow: inset 0 0 0 1px var(--ntx-orange);
+}
 .dashboard-layout-row__toggle {
   display: flex;
   align-items: flex-start;
   gap: var(--space-3);
   min-width: 0;
   cursor: pointer;
+}
+.dashboard-layout-row__drag {
+  align-self: center;
+  color: var(--ntx-muted);
+  font-size: 18px;
+  letter-spacing: -4px;
+  line-height: 1;
+  user-select: none;
 }
 .dashboard-layout-row__toggle input {
   width: 16px;

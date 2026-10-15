@@ -613,6 +613,8 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
   const [layoutError, setLayoutError] = useState<string | null>(null);
   const [layoutStatus, setLayoutStatus] = useState<string | null>(null);
   const [savingLayout, setSavingLayout] = useState(false);
+  const [draggingOverviewWidget, setDraggingOverviewWidget] = useState<MainOverviewWidgetKey | null>(null);
+  const [overviewDropTarget, setOverviewDropTarget] = useState<MainOverviewWidgetKey | null>(null);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [calendarStatus, setCalendarStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -671,6 +673,20 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
       const sourceIndex = order.indexOf(key);
       const targetIndex = order.indexOf(editableOrder[target]);
       [order[sourceIndex], order[targetIndex]] = [order[targetIndex], order[sourceIndex]];
+      return { ...current, order };
+    });
+  };
+
+  const reorderOverviewWidget = (source: MainOverviewWidgetKey, target: MainOverviewWidgetKey) => {
+    if (source === target) return;
+    setOverviewLayout((current) => {
+      const sourceIndex = current.order.indexOf(source);
+      const targetIndex = current.order.indexOf(target);
+      if (sourceIndex < 0 || targetIndex < 0) return current;
+      const order = [...current.order];
+      const [moved] = order.splice(sourceIndex, 1);
+      const nextTargetIndex = order.indexOf(target);
+      order.splice(nextTargetIndex, 0, moved);
       return { ...current, order };
     });
   };
@@ -780,8 +796,31 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
                 const widget = MAIN_OVERVIEW_WIDGETS.find((item) => item.key === key);
                 if (!widget || !availableOverviewWidgets.has(key)) return null;
                 return (
-                  <div className="dashboard-layout-row" key={key}>
+                  <div
+                    className={`dashboard-layout-row dashboard-layout-row--draggable${draggingOverviewWidget === key ? " dashboard-layout-row--dragging" : ""}${overviewDropTarget === key && draggingOverviewWidget !== key ? " dashboard-layout-row--drop-target" : ""}`}
+                    key={key}
+                    draggable={!readOnly && !savingLayout}
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", key);
+                      setDraggingOverviewWidget(key);
+                      setOverviewDropTarget(null);
+                    }}
+                    onDragOver={(event) => event.preventDefault()}
+                    onDragEnter={() => setOverviewDropTarget(key)}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      if (draggingOverviewWidget) reorderOverviewWidget(draggingOverviewWidget, key);
+                      setDraggingOverviewWidget(null);
+                      setOverviewDropTarget(null);
+                    }}
+                    onDragEnd={() => {
+                      setDraggingOverviewWidget(null);
+                      setOverviewDropTarget(null);
+                    }}
+                  >
                     <label className="dashboard-layout-row__toggle">
+                      <span className="dashboard-layout-row__drag" title="Drag to reorder" aria-hidden="true">⠿</span>
                       <input
                         type="checkbox"
                         checked={overviewLayout.visible[key]}
