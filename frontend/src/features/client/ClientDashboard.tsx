@@ -32,6 +32,7 @@ import { LocalSEO, Reviews } from "./GoogleVisibility";
 
 interface OverviewPayload {
   enabled_modules: NavModule[];
+  dashboard_layout: DashboardLayout;
   metrics: {
     total_leads: number;
     new_leads: number;
@@ -60,6 +61,36 @@ interface OverviewPayload {
     } | null;
   } | null;
   unavailable: UnavailableMetric[];
+}
+
+type OverviewWidgetKey = "stats" | "recent_leads" | "appointments" | "recent_conversations" | "services";
+type MainOverviewWidgetKey = Exclude<OverviewWidgetKey, "services">;
+
+interface OverviewLayout {
+  order: MainOverviewWidgetKey[];
+  visible: Record<OverviewWidgetKey, boolean>;
+  services_position: "left" | "right";
+  available_widgets: OverviewWidgetKey[];
+}
+
+interface DashboardLayout {
+  overview: OverviewLayout;
+}
+
+const MAIN_OVERVIEW_WIDGETS: { key: MainOverviewWidgetKey; label: string; description: string }[] = [
+  { key: "stats", label: "Key metrics", description: "New leads, conversations, requests, and missed calls." },
+  { key: "recent_leads", label: "Recent leads", description: "Newest captured opportunities." },
+  { key: "appointments", label: "Appointment requests", description: "Scheduling requests waiting for review." },
+  { key: "recent_conversations", label: "Recent conversations", description: "Latest active SMS intake conversations." },
+];
+
+function defaultOverviewLayout(): OverviewLayout {
+  return {
+    order: MAIN_OVERVIEW_WIDGETS.map((widget) => widget.key),
+    visible: { stats: true, recent_leads: true, appointments: true, recent_conversations: true, services: true },
+    services_position: "right",
+    available_widgets: ["stats", "recent_leads", "appointments", "recent_conversations", "services"],
+  };
 }
 
 interface LeadsPayload extends Paged<Lead> {
@@ -429,7 +460,108 @@ function Overview({ businessId, modules }: { businessId: string; modules: NavMod
   const enabledModules = data?.enabled_modules ?? modules;
   const enabledKeys = new Set(enabledModules.map((module) => module.key));
   const summaryModules = enabledModules.filter((module) => module.key !== "overview").slice(0, 6);
-  const showIntakeStats = ["leads", "conversations", "appointments", "ai_intake"].some((key) => enabledKeys.has(key));
+  const layout = data?.dashboard_layout.overview ?? defaultOverviewLayout();
+  const availableWidgets = new Set(layout.available_widgets);
+  const widgetVisible = (key: OverviewWidgetKey) => availableWidgets.has(key) && layout.visible[key];
+  const mainWidgets = layout.order.filter((key) => widgetVisible(key));
+
+  const renderMainWidget = (widget: MainOverviewWidgetKey) => {
+    if (!data) return null;
+    switch (widget) {
+      case "stats":
+        return (
+          <div className="overview-widget overview-widget--stats stat-grid overview-stat-grid" key={widget}>
+            {enabledKeys.has("leads") && <Stat label="New leads" value={data.metrics.new_leads} icon="♙" />}
+            {enabledKeys.has("conversations") && <Stat label="Open conversations" value={data.metrics.open_conversations} icon="◌" />}
+            {enabledKeys.has("appointments") && <Stat label="Pending approval" value={data.metrics.pending_approval} icon="◷" />}
+            {enabledKeys.has("ai_intake") && <Stat label="Missed calls handled" value={data.metrics.missed_calls_handled} icon="↗" />}
+          </div>
+        );
+      case "recent_leads":
+        return (
+          <div className="overview-widget overview-widget--recent-leads" key={widget}>
+          <Card title="Recent leads" action={<Link className="table__link" to="leads">View all</Link>}>
+            {data.recent_leads.length === 0 ? (
+              <EmptyState title="No leads yet" body="Captured leads will appear here." />
+            ) : (
+              <div className="table-scroll">
+                <table className="table overview-leads-table">
+                  <thead><tr><th>Customer</th><th>Service request</th><th>Source</th><th>Received</th><th>Status</th></tr></thead>
+                  <tbody>{data.recent_leads.slice(0, 4).map((lead) => (
+                    <tr key={lead.id}>
+                      <td><Link className="table__link" to="leads">{lead.customer_name || lead.phone}</Link></td>
+                      <td>{lead.service_request || lead.business_summary || "No service summary"}</td>
+                      <td><span className="lead-source"><span aria-hidden="true">●</span>{(lead.source || "SMS").replace(/_/g, " ")}</span></td>
+                      <td>{formatDate(lead.created_at)}</td>
+                      <td><Badge tone={leadTone(lead.workflow_status)}>{LEAD_STATUS_LABELS[lead.workflow_status]}</Badge></td>
+                    </tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            )}
+          </Card>
+          </div>
+        );
+      case "appointments":
+        return (
+          <div className="overview-widget overview-widget--appointments" key={widget}>
+          <Card title="Appointment requests" action={<Link className="table__link" to="appointments">View all</Link>}>
+            {data.appointment_requests.length === 0 ? (
+              <EmptyState title="No pending requests" body="New scheduling preferences will appear here." />
+            ) : (
+              <div className="overview-appointments">
+                {data.appointment_requests.map((appointment) => (
+                  <Link className="overview-appointment" to="appointments" key={appointment.id}>
+                    <span className="overview-appointment__date" aria-hidden="true">
+                      <small>{new Date(appointment.scheduled_start_at || appointment.created_at || Date.now()).toLocaleDateString(undefined, { month: "short" })}</small>
+                      <strong>{new Date(appointment.scheduled_start_at || appointment.created_at || Date.now()).getDate()}</strong>
+                      <small>{new Date(appointment.scheduled_start_at || appointment.created_at || Date.now()).toLocaleDateString(undefined, { weekday: "short" })}</small>
+                    </span>
+                    <span><strong>{appointment.customer_name || appointment.customer_phone}</strong><small>{appointment.service_request || "Service appointment"}</small><small>{appointment.requested_time_text || "Time not provided"}</small></span>
+                    <span className="btn btn--primary overview-appointment__action">Review &amp; schedule</span>
+                  </Link>
+                ))}
+              </div>
+            )}
+            <div className={data.calendar.connected ? "calendar-banner calendar-banner--ok calendar-banner--compact" : "calendar-banner calendar-banner--warn calendar-banner--compact"}>
+              <span>{data.calendar.connected ? "✓" : "!"}</span>
+              <strong>{data.calendar.connected ? `${data.calendar.calendar_name} connected` : "Calendar not connected"}</strong>
+            </div>
+          </Card>
+          </div>
+        );
+      case "recent_conversations":
+        return (
+          <div className="overview-widget overview-widget--recent-conversations" key={widget}>
+          <Card title="Recent conversations" action={<Link className="table__link" to="conversations">View all</Link>}>
+            {data.recent_conversations.length === 0 ? (
+              <EmptyState title="No conversations yet" body="SMS intake conversations will appear here." />
+            ) : (
+              <div className="overview-list">
+                {data.recent_conversations.slice(0, 3).map((conversation) => (
+                  <Link className="overview-list__item" to="conversations" key={conversation.id}>
+                    <span className="conversation-avatar" aria-hidden="true">{(conversation.customer_name || conversation.phone).slice(0, 2).toUpperCase()}</span>
+                    <span className="overview-list__copy"><strong>{conversation.customer_name || conversation.phone}</strong><small>{conversation.last_message || "No stored message"}</small></span>
+                    <span className="conversation-time">{formatDate(conversation.updated_at)}</span>
+                  </Link>
+                ))}
+              </div>
+            )}
+          </Card>
+          </div>
+        );
+    }
+  };
+
+  const services = data && widgetVisible("services") && summaryModules.length > 0 ? (
+    <aside className="overview-services overview-dashboard__services" aria-labelledby="your-services">
+      <div className="overview-section-heading"><div><h2 id="your-services">Your services</h2><p>Only the modules enabled for this business appear here.</p></div></div>
+      <div className="overview-module-grid overview-module-grid--rail">
+        {summaryModules.map((module) => <OverviewModuleCard key={module.key} module={module} data={data} />)}
+      </div>
+    </aside>
+  ) : null;
+  const servicesOnLeft = layout.services_position === "left";
 
   return (
     <>
@@ -441,98 +573,26 @@ function Overview({ businessId, modules }: { businessId: string; modules: NavMod
       {loading && <Loading rows={3} />}
       {error && <ErrorState body={error} />}
       {data && (
-        <div className="overview-dashboard">
+        <div className={`overview-dashboard${services ? "" : " overview-dashboard--no-services"}${servicesOnLeft ? " overview-dashboard--services-left" : ""}`}>
+          {servicesOnLeft && services}
           <main className="overview-dashboard__main">
-          {showIntakeStats && <div className="stat-grid overview-stat-grid">
-            {enabledKeys.has("leads") && <Stat label="New leads" value={data.metrics.new_leads} icon="♙" />}
-            {enabledKeys.has("conversations") && <Stat label="Open conversations" value={data.metrics.open_conversations} icon="◌" />}
-            {enabledKeys.has("appointments") && <Stat label="Pending approval" value={data.metrics.pending_approval} icon="◷" />}
-            {enabledKeys.has("ai_intake") && <Stat label="Missed calls handled" value={data.metrics.missed_calls_handled} icon="↗" />}
-          </div>}
-
-          <section className="overview-live-feed" aria-labelledby="live-business-feed">
-            <div className="overview-section-heading">
+            <section className="overview-live-feed" aria-labelledby="live-business-feed">
+              <div className="overview-section-heading">
               <div>
                 <h2 id="live-business-feed">Live business feed</h2>
                 <p>Recent leads, conversations, and appointment requests.</p>
               </div>
-            </div>
-          {(enabledKeys.has("leads") || enabledKeys.has("appointments")) && <div className="overview-live-grid overview-live-grid--primary">
-            {enabledKeys.has("leads") &&
-            <Card title="Recent leads" action={<Link className="table__link" to="leads">View all</Link>}>
-              {data.recent_leads.length === 0 ? (
-                <EmptyState title="No leads yet" body="Captured leads will appear here." />
-              ) : (
-                <div className="table-scroll">
-                  <table className="table overview-leads-table">
-                    <thead><tr><th>Customer</th><th>Service request</th><th>Source</th><th>Received</th><th>Status</th></tr></thead>
-                    <tbody>{data.recent_leads.slice(0, 4).map((lead) => (
-                      <tr key={lead.id}>
-                        <td><Link className="table__link" to="leads">{lead.customer_name || lead.phone}</Link></td>
-                        <td>{lead.service_request || lead.business_summary || "No service summary"}</td>
-                        <td><span className="lead-source"><span aria-hidden="true">●</span>{(lead.source || "SMS").replace(/_/g, " ")}</span></td>
-                        <td>{formatDate(lead.created_at)}</td>
-                        <td><Badge tone={leadTone(lead.workflow_status)}>{LEAD_STATUS_LABELS[lead.workflow_status]}</Badge></td>
-                      </tr>
-                    ))}</tbody>
-                  </table>
-                </div>
-              )}
-            </Card>}
-
-            {enabledKeys.has("appointments") &&
-            <Card title="Appointment requests" action={<Link className="table__link" to="appointments">View all</Link>}>
-              {data.appointment_requests.length === 0 ? (
-                <EmptyState title="No pending requests" body="New scheduling preferences will appear here." />
-              ) : (
-                <div className="overview-appointments">
-                  {data.appointment_requests.map((appointment) => (
-                    <Link className="overview-appointment" to="appointments" key={appointment.id}>
-                      <span className="overview-appointment__date" aria-hidden="true">
-                        <small>{new Date(appointment.scheduled_start_at || appointment.created_at || Date.now()).toLocaleDateString(undefined, { month: "short" })}</small>
-                        <strong>{new Date(appointment.scheduled_start_at || appointment.created_at || Date.now()).getDate()}</strong>
-                        <small>{new Date(appointment.scheduled_start_at || appointment.created_at || Date.now()).toLocaleDateString(undefined, { weekday: "short" })}</small>
-                      </span>
-                      <span><strong>{appointment.customer_name || appointment.customer_phone}</strong><small>{appointment.service_request || "Service appointment"}</small><small>{appointment.requested_time_text || "Time not provided"}</small></span>
-                      <span className="btn btn--primary overview-appointment__action">Review &amp; schedule</span>
-                    </Link>
-                  ))}
-                </div>
-              )}
-              <div className={data.calendar.connected ? "calendar-banner calendar-banner--ok calendar-banner--compact" : "calendar-banner calendar-banner--warn calendar-banner--compact"}>
-                <span>{data.calendar.connected ? "✓" : "!"}</span>
-                <strong>{data.calendar.connected ? `${data.calendar.calendar_name} connected` : "Calendar not connected"}</strong>
               </div>
-            </Card>}
-          </div>}
-
-          {enabledKeys.has("conversations") && <div className="overview-live-grid overview-live-grid--activity overview-live-grid--single">
-            {enabledKeys.has("conversations") &&
-            <Card title="Recent conversations" action={<Link className="table__link" to="conversations">View all</Link>}>
-              {data.recent_conversations.length === 0 ? (
-                <EmptyState title="No conversations yet" body="SMS intake conversations will appear here." />
-              ) : (
-                <div className="overview-list">
-                  {data.recent_conversations.slice(0, 3).map((conversation) => (
-                    <Link className="overview-list__item" to="conversations" key={conversation.id}>
-                      <span className="conversation-avatar" aria-hidden="true">{(conversation.customer_name || conversation.phone).slice(0, 2).toUpperCase()}</span>
-                      <span className="overview-list__copy"><strong>{conversation.customer_name || conversation.phone}</strong><small>{conversation.last_message || "No stored message"}</small></span>
-                      <span className="conversation-time">{formatDate(conversation.updated_at)}</span>
-                    </Link>
-                  ))}
+              {mainWidgets.length > 0 ? (
+                <div className="overview-widget-grid">
+                  {mainWidgets.map((widget) => renderMainWidget(widget))}
                 </div>
+              ) : (
+                <Card><EmptyState title="No Overview widgets are showing" body="Open Settings to choose the widgets this business wants to see." /></Card>
               )}
-            </Card>}
-          </div>}
-          </section>
+            </section>
           </main>
-
-          {summaryModules.length > 0 && <aside className="overview-services overview-dashboard__services" aria-labelledby="your-services">
-            <div className="overview-section-heading"><div><h2 id="your-services">Your services</h2><p>Only the modules enabled for this business appear here.</p></div></div>
-            <div className="overview-module-grid overview-module-grid--rail">
-              {summaryModules.map((module) => <OverviewModuleCard key={module.key} module={module} data={data} />)}
-            </div>
-          </aside>}
+          {!servicesOnLeft && services}
         </div>
       )}
     </>
@@ -547,8 +607,12 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
   const [calendarId, setCalendarId] = useState("");
   const [timezone, setTimezone] = useState("America/Chicago");
   const [duration, setDuration] = useState(60);
+  const [overviewLayout, setOverviewLayout] = useState<OverviewLayout>(defaultOverviewLayout);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [layoutError, setLayoutError] = useState<string | null>(null);
+  const [layoutStatus, setLayoutStatus] = useState<string | null>(null);
+  const [savingLayout, setSavingLayout] = useState(false);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [calendarStatus, setCalendarStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -556,7 +620,7 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const payload = await api.get<{ business: Business; calendar: CalendarConnection }>(
+      const payload = await api.get<{ business: Business; calendar: CalendarConnection; dashboard_layout: DashboardLayout }>(
         `/api/dashboard/businesses/${businessId}/settings`,
       );
       setBusiness(payload.business);
@@ -565,6 +629,7 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
       setCalendarId(payload.calendar.calendar_id);
       setTimezone(payload.calendar.timezone);
       setDuration(payload.calendar.default_duration_minutes);
+      setOverviewLayout(payload.dashboard_layout.overview);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load settings.");
@@ -588,6 +653,48 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
       setError(err instanceof Error ? err.message : "Could not save.");
     }
   };
+
+  const updateOverviewVisibility = (key: OverviewWidgetKey, visible: boolean) => {
+    setOverviewLayout((current) => ({
+      ...current,
+      visible: { ...current.visible, [key]: visible },
+    }));
+  };
+
+  const moveOverviewWidget = (key: MainOverviewWidgetKey, direction: -1 | 1) => {
+    setOverviewLayout((current) => {
+      const editableOrder = current.order.filter((candidate) => availableOverviewWidgets.has(candidate));
+      const index = editableOrder.indexOf(key);
+      const target = index + direction;
+      if (index < 0 || target < 0 || target >= editableOrder.length) return current;
+      const order = [...current.order];
+      const sourceIndex = order.indexOf(key);
+      const targetIndex = order.indexOf(editableOrder[target]);
+      [order[sourceIndex], order[targetIndex]] = [order[targetIndex], order[sourceIndex]];
+      return { ...current, order };
+    });
+  };
+
+  const saveOverviewLayout = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setLayoutError(null);
+    setLayoutStatus(null);
+    setSavingLayout(true);
+    try {
+      const payload = await api.patch<{ dashboard_layout: DashboardLayout }>(
+        `/api/dashboard/businesses/${businessId}/settings`,
+        { dashboard_layout: { overview: overviewLayout } },
+      );
+      setOverviewLayout(payload.dashboard_layout.overview);
+      setLayoutStatus("Overview layout saved for everyone at this business.");
+    } catch (err) {
+      setLayoutError(err instanceof Error ? err.message : "Could not save the Overview layout.");
+    } finally {
+      setSavingLayout(false);
+    }
+  };
+
+  const availableOverviewWidgets = new Set(overviewLayout.available_widgets);
 
   const connectCalendar = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -662,6 +769,72 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
       </Card>
 
       <div className="settings-section">
+        <Card
+          title="Dashboard layout"
+          action={<Link className="table__link" to={`/b/${businessId}`}>Preview Overview</Link>}
+        >
+          <p className="settings-card-copy">Choose what appears on this business’s Overview. These changes are shared with everyone who can access this business—not saved only on one person’s computer.</p>
+          <form onSubmit={saveOverviewLayout} noValidate>
+            <div className="dashboard-layout-list" aria-label="Overview widgets">
+              {overviewLayout.order.filter((key) => availableOverviewWidgets.has(key)).map((key, index, editableOrder) => {
+                const widget = MAIN_OVERVIEW_WIDGETS.find((item) => item.key === key);
+                if (!widget || !availableOverviewWidgets.has(key)) return null;
+                return (
+                  <div className="dashboard-layout-row" key={key}>
+                    <label className="dashboard-layout-row__toggle">
+                      <input
+                        type="checkbox"
+                        checked={overviewLayout.visible[key]}
+                        disabled={readOnly || savingLayout}
+                        onChange={(event) => updateOverviewVisibility(key, event.target.checked)}
+                      />
+                      <span><strong>{widget.label}</strong><small>{widget.description}</small></span>
+                    </label>
+                    <div className="dashboard-layout-row__actions" aria-label={`Move ${widget.label}`}>
+                      <button className="btn btn--small" type="button" disabled={readOnly || savingLayout || index === 0} onClick={() => moveOverviewWidget(key, -1)} aria-label={`Move ${widget.label} up`}>↑</button>
+                      <button className="btn btn--small" type="button" disabled={readOnly || savingLayout || index === editableOrder.length - 1} onClick={() => moveOverviewWidget(key, 1)} aria-label={`Move ${widget.label} down`}>↓</button>
+                    </div>
+                  </div>
+                );
+              })}
+              {availableOverviewWidgets.has("services") && (
+                <div className="dashboard-layout-row dashboard-layout-row--services">
+                  <label className="dashboard-layout-row__toggle">
+                    <input
+                      type="checkbox"
+                      checked={overviewLayout.visible.services}
+                      disabled={readOnly || savingLayout}
+                      onChange={(event) => updateOverviewVisibility("services", event.target.checked)}
+                    />
+                    <span><strong>Your services rail</strong><small>Enabled services and their current status.</small></span>
+                  </label>
+                  <select
+                    className="input dashboard-layout-row__select"
+                    aria-label="Services rail position"
+                    value={overviewLayout.services_position}
+                    disabled={readOnly || savingLayout || !overviewLayout.visible.services}
+                    onChange={(event) => setOverviewLayout((current) => ({ ...current, services_position: event.target.value as "left" | "right" }))}
+                  >
+                    <option value="right">Right side</option>
+                    <option value="left">Left side</option>
+                  </select>
+                </div>
+              )}
+            </div>
+            {readOnly && <p className="read-only-note">Your role has read-only access. Ask a business owner to change the dashboard layout.</p>}
+            {layoutError && <p className="field__error" role="alert">{layoutError}</p>}
+            {layoutStatus && <p className="calendar-success" role="status">{layoutStatus}</p>}
+            <div className="dashboard-layout-footer">
+              <button className="btn" type="button" disabled={readOnly || savingLayout} onClick={() => { setOverviewLayout(defaultOverviewLayout()); setLayoutStatus(null); setLayoutError(null); }}>
+                Restore default
+              </button>
+              <button className="btn btn--primary" type="submit" disabled={readOnly || savingLayout}>
+                {savingLayout ? "Saving layout..." : "Save Overview layout"}
+              </button>
+            </div>
+          </form>
+        </Card>
+
         <Card title="Google Calendar">
           <div className={calendar?.connected ? "calendar-banner calendar-banner--ok" : "calendar-banner calendar-banner--warn"}>
             <span>{calendar?.connected ? "✓" : "!"}</span>

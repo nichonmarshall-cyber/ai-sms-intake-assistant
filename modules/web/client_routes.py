@@ -11,7 +11,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import Integer, String, cast, func, or_, select
 
-from modules import calendar_service, entitlements, google_visibility, website_monitoring
+from modules import calendar_service, dashboard_layout, entitlements, google_visibility, website_monitoring
 from modules.auth.decorators import require_business_access, require_module
 from modules.models import AppointmentRequest, Business, ConversationSession, Lead, MissedCallEvent
 from modules.serializers import (
@@ -213,6 +213,7 @@ def overview(business_id: str):
     return jsonify(
         {
             "enabled_modules": navigation_modules,
+            "dashboard_layout": dashboard_layout.for_business(business, enabled),
             "metrics": {
                 "total_leads": lead_count,
                 "new_leads": open_leads,
@@ -875,10 +876,12 @@ def get_settings(business_id: str):
     business = g.db.get(Business, business_id)
     if business is None:
         return jsonify({"error": "Business not found."}), 404
+    enabled = entitlements.enabled_module_keys(g.db, business_id)
     return jsonify(
         {
             "business": business_dto(business),
             "calendar": calendar_service.connection_dto(business),
+            "dashboard_layout": dashboard_layout.for_business(business, enabled),
         }
     ), 200
 
@@ -908,6 +911,20 @@ def update_settings(business_id: str):
         business.settings = settings
         changed["business_hours"] = "updated"
 
+    layout_payload = None
+    if "dashboard_layout" in payload:
+        if not isinstance(payload["dashboard_layout"], dict):
+            return jsonify(
+                {"error": "Validation failed.", "fields": {"dashboard_layout": "Must be an object."}}
+            ), 400
+        enabled = entitlements.enabled_module_keys(g.db, business_id)
+        layout_payload = dashboard_layout.save_for_business(
+            business,
+            payload["dashboard_layout"],
+            enabled,
+        )
+        changed["dashboard_layout"] = "updated"
+
     record_audit_event(
         g.db,
         action="business.settings.update",
@@ -918,4 +935,12 @@ def update_settings(business_id: str):
         details=changed,
     )
     g.db.commit()
-    return jsonify({"business": business_dto(business)}), 200
+    return jsonify(
+        {
+            "business": business_dto(business),
+            "dashboard_layout": layout_payload
+            or dashboard_layout.for_business(
+                business, entitlements.enabled_module_keys(g.db, business_id)
+            ),
+        }
+    ), 200

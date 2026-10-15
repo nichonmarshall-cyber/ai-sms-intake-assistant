@@ -805,6 +805,12 @@
 .overview-dashboard__main {
   min-width: 0;
 }
+.overview-dashboard--no-services {
+  grid-template-columns: minmax(0, 1fr);
+}
+.overview-dashboard--services-left {
+  grid-template-columns: clamp(270px, 25vw, 350px) minmax(0, 1fr);
+}
 .overview-dashboard__services {
   min-width: 0;
   margin-top: 0;
@@ -813,6 +819,18 @@
 }
 .overview-live-feed {
   min-width: 0;
+}
+.overview-widget-grid {
+  display: grid;
+  grid-template-columns: minmax(420px, 1.35fr) minmax(320px, 0.65fr);
+  align-items: start;
+  gap: var(--space-4);
+}
+.overview-widget--stats {
+  grid-column: 1 / -1;
+}
+.overview-widget--recent-conversations {
+  grid-column: 1 / -1;
 }
 .overview-module-grid {
   display: grid;
@@ -1432,6 +1450,75 @@
   color: var(--ntx-green);
   font-size: 14px;
 }
+.settings-card-copy {
+  margin: 0 0 var(--space-4);
+  color: var(--ntx-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.dashboard-layout-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+.dashboard-layout-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  padding: 12px;
+  border: 1px solid var(--ntx-border);
+  border-radius: var(--radius-sm);
+  background: var(--ntx-elevated);
+}
+.dashboard-layout-row__toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  min-width: 0;
+  cursor: pointer;
+}
+.dashboard-layout-row__toggle input {
+  width: 16px;
+  height: 16px;
+  margin: 2px 0 0;
+  accent-color: var(--ntx-orange);
+}
+.dashboard-layout-row__toggle strong,
+.dashboard-layout-row__toggle small {
+  display: block;
+}
+.dashboard-layout-row__toggle strong {
+  color: var(--ntx-white);
+  font-size: 13px;
+}
+.dashboard-layout-row__toggle small {
+  margin-top: 3px;
+  color: var(--ntx-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+.dashboard-layout-row__actions,
+.dashboard-layout-footer {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+.dashboard-layout-row__actions {
+  flex: 0 0 auto;
+}
+.btn--small {
+  min-width: 34px;
+  padding: 5px 9px;
+}
+.dashboard-layout-row__select {
+  width: 125px;
+  flex: 0 0 125px;
+}
+.dashboard-layout-footer {
+  justify-content: space-between;
+  margin-top: var(--space-4);
+}
 
 @media (max-width: 900px) {
   .overview-dashboard {
@@ -1455,6 +1542,12 @@
   .calendar-settings-grid {
     grid-template-columns: 1fr;
   }
+  .overview-widget-grid {
+    grid-template-columns: 1fr;
+  }
+  .overview-widget--stats {
+    grid-column: auto;
+  }
   .appointment-row {
     grid-template-columns: 52px minmax(0, 1fr);
   }
@@ -1470,6 +1563,21 @@
   }
   .overview-module-grid {
     grid-template-columns: 1fr;
+  }
+  .dashboard-layout-row {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  .dashboard-layout-row__actions,
+  .dashboard-layout-row__select {
+    margin-left: 28px;
+  }
+  .dashboard-layout-footer {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+  .dashboard-layout-footer .btn {
+    width: 100%;
   }
   .activity-chart {
     gap: 5px;
