@@ -22,6 +22,7 @@ def test_layout_normalization_preserves_only_known_overview_widgets():
             "order": ["appointments", "not-real", "stats"],
             "visible": {"appointments": False, "not-real": True},
             "services_position": "left",
+            "sizes": {"appointments": "wide", "stats": "not-real", "bogus": "wide"},
         },
         {"overview", "appointments", "settings"},
     )
@@ -30,6 +31,12 @@ def test_layout_normalization_preserves_only_known_overview_widgets():
     assert layout["visible"]["appointments"] is False
     assert layout["visible"]["stats"] is True
     assert layout["services_position"] == "left"
+    assert layout["sizes"] == {
+        "stats": "wide",
+        "recent_leads": "standard",
+        "appointments": "wide",
+        "recent_conversations": "wide",
+    }
     assert layout["available_widgets"] == ["stats", "appointments", "services"]
 
 
@@ -45,6 +52,7 @@ def test_business_owner_saves_layout_and_overview_receives_it(demo_app):
                     "order": ["appointments", "stats", "recent_conversations", "recent_leads"],
                     "visible": {"stats": False, "services": False},
                     "services_position": "left",
+                    "sizes": {"appointments": "wide", "recent_leads": "standard"},
                 }
             }
         },
@@ -57,6 +65,8 @@ def test_business_owner_saves_layout_and_overview_receives_it(demo_app):
     assert saved["visible"]["stats"] is False
     assert saved["visible"]["services"] is False
     assert saved["services_position"] == "left"
+    assert saved["sizes"]["appointments"] == "wide"
+    assert saved["sizes"]["recent_leads"] == "standard"
 
     overview = client.get(f"/api/dashboard/businesses/{business.id}/overview")
     assert overview.status_code == 200
@@ -66,6 +76,7 @@ def test_business_owner_saves_layout_and_overview_receives_it(demo_app):
     try:
         stored = db.get(Business, business.id)
         assert stored.settings["dashboard_layout"]["overview"]["services_position"] == "left"
+        assert stored.settings["dashboard_layout"]["overview"]["sizes"]["appointments"] == "wide"
     finally:
         db.close()
 

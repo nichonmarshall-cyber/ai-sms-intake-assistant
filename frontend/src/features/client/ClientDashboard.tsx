@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, Route, Routes, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import type {
@@ -65,11 +65,13 @@ interface OverviewPayload {
 
 type OverviewWidgetKey = "stats" | "recent_leads" | "appointments" | "recent_conversations" | "services";
 type MainOverviewWidgetKey = Exclude<OverviewWidgetKey, "services">;
+type OverviewWidgetSize = "standard" | "wide";
 
 interface OverviewLayout {
   order: MainOverviewWidgetKey[];
   visible: Record<OverviewWidgetKey, boolean>;
   services_position: "left" | "right";
+  sizes: Record<MainOverviewWidgetKey, OverviewWidgetSize>;
   available_widgets: OverviewWidgetKey[];
 }
 
@@ -89,7 +91,18 @@ function defaultOverviewLayout(): OverviewLayout {
     order: MAIN_OVERVIEW_WIDGETS.map((widget) => widget.key),
     visible: { stats: true, recent_leads: true, appointments: true, recent_conversations: true, services: true },
     services_position: "right",
+    sizes: { stats: "wide", recent_leads: "standard", appointments: "standard", recent_conversations: "wide" },
     available_widgets: ["stats", "recent_leads", "appointments", "recent_conversations", "services"],
+  };
+}
+
+function cloneOverviewLayout(layout: OverviewLayout): OverviewLayout {
+  return {
+    ...layout,
+    order: [...layout.order],
+    visible: { ...layout.visible },
+    sizes: { ...layout.sizes },
+    available_widgets: [...layout.available_widgets],
   };
 }
 
@@ -433,11 +446,25 @@ function OverviewModuleCard({ module, data }: { module: NavModule; data: Overvie
   );
 }
 
-function Overview({ businessId, modules }: { businessId: string; modules: NavModule[] }) {
+function Overview({ businessId, modules, readOnly }: { businessId: string; modules: NavModule[]; readOnly: boolean }) {
   const heading = useFocusOnMount<HTMLHeadingElement>();
   const [data, setData] = useState<OverviewPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [editingLayout, setEditingLayout] = useState(false);
+  const [draftLayout, setDraftLayout] = useState<OverviewLayout | null>(null);
+  const [savingLayout, setSavingLayout] = useState(false);
+  const [layoutError, setLayoutError] = useState<string | null>(null);
+  const [layoutStatus, setLayoutStatus] = useState<string | null>(null);
+  const [draggingWidget, setDraggingWidget] = useState<MainOverviewWidgetKey | null>(null);
+  const [dropTarget, setDropTarget] = useState<MainOverviewWidgetKey | null>(null);
+  const [resizingWidget, setResizingWidget] = useState<MainOverviewWidgetKey | null>(null);
+  const resizeStart = useRef<{
+    widget: MainOverviewWidgetKey;
+    startX: number;
+    startSize: OverviewWidgetSize;
+    threshold: number;
+  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -460,17 +487,114 @@ function Overview({ businessId, modules }: { businessId: string; modules: NavMod
   const enabledModules = data?.enabled_modules ?? modules;
   const enabledKeys = new Set(enabledModules.map((module) => module.key));
   const summaryModules = enabledModules.filter((module) => module.key !== "overview").slice(0, 6);
-  const layout = data?.dashboard_layout.overview ?? defaultOverviewLayout();
+  const savedLayout = data?.dashboard_layout.overview ?? defaultOverviewLayout();
+  const layout = editingLayout && draftLayout ? draftLayout : savedLayout;
   const availableWidgets = new Set(layout.available_widgets);
   const widgetVisible = (key: OverviewWidgetKey) => availableWidgets.has(key) && layout.visible[key];
   const mainWidgets = layout.order.filter((key) => widgetVisible(key));
+
+  const beginLayoutEdit = () => {
+    setDraftLayout(cloneOverviewLayout(savedLayout));
+    setLayoutError(null);
+    setLayoutStatus(null);
+    setEditingLayout(true);
+  };
+
+  const cancelLayoutEdit = () => {
+    setEditingLayout(false);
+    setDraftLayout(null);
+    setDraggingWidget(null);
+    setDropTarget(null);
+    setResizingWidget(null);
+    resizeStart.current = null;
+    setLayoutError(null);
+  };
+
+  const moveDraftWidget = (source: MainOverviewWidgetKey, target: MainOverviewWidgetKey) => {
+    if (source === target) return;
+    setDraftLayout((current) => {
+      if (!current) return current;
+      const sourceIndex = current.order.indexOf(source);
+      const targetIndex = current.order.indexOf(target);
+      if (sourceIndex < 0 || targetIndex < 0) return current;
+      const nextOrder = [...current.order];
+      nextOrder.splice(sourceIndex, 1);
+      nextOrder.splice(targetIndex, 0, source);
+      return { ...current, order: nextOrder };
+    });
+  };
+
+  const moveServicesRail = () => {
+    setDraftLayout((current) => current ? {
+      ...current,
+      services_position: current.services_position === "left" ? "right" : "left",
+    } : current);
+  };
+
+  const resizeDraftWidget = (widget: MainOverviewWidgetKey, size: OverviewWidgetSize) => {
+    setDraftLayout((current) => current ? {
+      ...current,
+      sizes: { ...current.sizes, [widget]: size },
+    } : current);
+  };
+
+  const beginResize = (event: React.PointerEvent<HTMLButtonElement>, widget: MainOverviewWidgetKey) => {
+    if (savingLayout) return;
+    const gridWidth = event.currentTarget.closest(".overview-widget-grid")?.getBoundingClientRect().width ?? 600;
+    resizeStart.current = {
+      widget,
+      startX: event.clientX,
+      startSize: layout.sizes[widget],
+      threshold: Math.max(72, gridWidth * 0.12),
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    setResizingWidget(widget);
+  };
+
+  const updateResize = (event: React.PointerEvent<HTMLButtonElement>, widget: MainOverviewWidgetKey) => {
+    const start = resizeStart.current;
+    if (!start || start.widget !== widget) return;
+    const deltaX = event.clientX - start.startX;
+    const nextSize: OverviewWidgetSize = deltaX >= start.threshold
+      ? "wide"
+      : deltaX <= -start.threshold
+        ? "standard"
+        : start.startSize;
+    resizeDraftWidget(widget, nextSize);
+  };
+
+  const finishResize = () => {
+    resizeStart.current = null;
+    setResizingWidget(null);
+  };
+
+  const saveLayout = async () => {
+    if (!draftLayout) return;
+    setLayoutError(null);
+    setLayoutStatus(null);
+    setSavingLayout(true);
+    try {
+      const payload = await api.patch<{ dashboard_layout: DashboardLayout }>(
+        `/api/dashboard/businesses/${businessId}/settings`,
+        { dashboard_layout: { overview: draftLayout } },
+      );
+      setData((current) => current ? { ...current, dashboard_layout: payload.dashboard_layout } : current);
+      setEditingLayout(false);
+      setDraftLayout(null);
+      setLayoutStatus("Overview layout saved for everyone at this business.");
+    } catch (err) {
+      setLayoutError(err instanceof Error ? err.message : "Could not save the Overview layout.");
+    } finally {
+      setSavingLayout(false);
+    }
+  };
 
   const renderMainWidget = (widget: MainOverviewWidgetKey) => {
     if (!data) return null;
     switch (widget) {
       case "stats":
         return (
-          <div className="overview-widget overview-widget--stats stat-grid overview-stat-grid" key={widget}>
+          <div className="stat-grid overview-stat-grid">
             {enabledKeys.has("leads") && <Stat label="New leads" value={data.metrics.new_leads} icon="♙" />}
             {enabledKeys.has("conversations") && <Stat label="Open conversations" value={data.metrics.open_conversations} icon="◌" />}
             {enabledKeys.has("appointments") && <Stat label="Pending approval" value={data.metrics.pending_approval} icon="◷" />}
@@ -479,7 +603,6 @@ function Overview({ businessId, modules }: { businessId: string; modules: NavMod
         );
       case "recent_leads":
         return (
-          <div className="overview-widget overview-widget--recent-leads" key={widget}>
           <Card title="Recent leads" action={<Link className="table__link" to="leads">View all</Link>}>
             {data.recent_leads.length === 0 ? (
               <EmptyState title="No leads yet" body="Captured leads will appear here." />
@@ -500,11 +623,9 @@ function Overview({ businessId, modules }: { businessId: string; modules: NavMod
               </div>
             )}
           </Card>
-          </div>
         );
       case "appointments":
         return (
-          <div className="overview-widget overview-widget--appointments" key={widget}>
           <Card title="Appointment requests" action={<Link className="table__link" to="appointments">View all</Link>}>
             {data.appointment_requests.length === 0 ? (
               <EmptyState title="No pending requests" body="New scheduling preferences will appear here." />
@@ -528,11 +649,9 @@ function Overview({ businessId, modules }: { businessId: string; modules: NavMod
               <strong>{data.calendar.connected ? `${data.calendar.calendar_name} connected` : "Calendar not connected"}</strong>
             </div>
           </Card>
-          </div>
         );
       case "recent_conversations":
         return (
-          <div className="overview-widget overview-widget--recent-conversations" key={widget}>
           <Card title="Recent conversations" action={<Link className="table__link" to="conversations">View all</Link>}>
             {data.recent_conversations.length === 0 ? (
               <EmptyState title="No conversations yet" body="SMS intake conversations will appear here." />
@@ -548,20 +667,26 @@ function Overview({ businessId, modules }: { businessId: string; modules: NavMod
               </div>
             )}
           </Card>
-          </div>
         );
     }
   };
 
+  const servicesOnLeft = layout.services_position === "left";
   const services = data && widgetVisible("services") && summaryModules.length > 0 ? (
     <aside className="overview-services overview-dashboard__services" aria-labelledby="your-services">
-      <div className="overview-section-heading"><div><h2 id="your-services">Your services</h2><p>Only the modules enabled for this business appear here.</p></div></div>
+      <div className="overview-section-heading">
+        <div><h2 id="your-services">Your services</h2><p>Only the modules enabled for this business appear here.</p></div>
+        {editingLayout && (
+          <button className="btn btn--small" type="button" onClick={moveServicesRail} disabled={savingLayout}>
+            Move {servicesOnLeft ? "right" : "left"}
+          </button>
+        )}
+      </div>
       <div className="overview-module-grid overview-module-grid--rail">
         {summaryModules.map((module) => <OverviewModuleCard key={module.key} module={module} data={data} />)}
       </div>
     </aside>
   ) : null;
-  const servicesOnLeft = layout.services_position === "left";
 
   return (
     <>
@@ -578,14 +703,93 @@ function Overview({ businessId, modules }: { businessId: string; modules: NavMod
           <main className="overview-dashboard__main">
             <section className="overview-live-feed" aria-labelledby="live-business-feed">
               <div className="overview-section-heading">
-              <div>
-                <h2 id="live-business-feed">Live business feed</h2>
-                <p>Recent leads, conversations, and appointment requests.</p>
+                <div>
+                  <h2 id="live-business-feed">Live business feed</h2>
+                  <p>{editingLayout ? "Drag cards by the dotted handle. Drag a card’s lower-right corner to snap it between half and full width, then save." : "Recent leads, conversations, and appointment requests."}</p>
+                </div>
+                {!readOnly && (
+                  <div className="overview-layout-actions">
+                    {editingLayout ? (
+                      <>
+                        <button className="btn" type="button" onClick={cancelLayoutEdit} disabled={savingLayout}>Cancel</button>
+                        <button className="btn btn--primary" type="button" onClick={() => void saveLayout()} disabled={savingLayout}>
+                          {savingLayout ? "Saving..." : "Save layout"}
+                        </button>
+                      </>
+                    ) : (
+                      <button className="btn" type="button" onClick={beginLayoutEdit}>Customize layout</button>
+                    )}
+                  </div>
+                )}
               </div>
-              </div>
+              {layoutError && <p className="field__error overview-layout-feedback" role="alert">{layoutError}</p>}
+              {layoutStatus && <p className="calendar-success overview-layout-feedback" role="status">{layoutStatus}</p>}
               {mainWidgets.length > 0 ? (
                 <div className="overview-widget-grid">
-                  {mainWidgets.map((widget) => renderMainWidget(widget))}
+                  {mainWidgets.map((widget) => {
+                    const widgetMeta = MAIN_OVERVIEW_WIDGETS.find((item) => item.key === widget);
+                    const isDragging = draggingWidget === widget;
+                    const isDropTarget = dropTarget === widget && draggingWidget !== widget;
+                    return (
+                      <div
+                        className={`overview-widget overview-widget--${widget} overview-widget--size-${layout.sizes[widget]}${editingLayout ? " overview-widget--editing" : ""}${isDragging ? " overview-widget--dragging" : ""}${isDropTarget ? " overview-widget--drop-target" : ""}${resizingWidget === widget ? " overview-widget--resizing" : ""}`}
+                        key={widget}
+                        onDragOver={(event) => {
+                          if (!editingLayout || !draggingWidget || draggingWidget === widget) return;
+                          event.preventDefault();
+                          event.dataTransfer.dropEffect = "move";
+                        }}
+                        onDragEnter={() => {
+                          if (editingLayout && draggingWidget && draggingWidget !== widget) setDropTarget(widget);
+                        }}
+                        onDrop={(event) => {
+                          if (!editingLayout || !draggingWidget) return;
+                          event.preventDefault();
+                          moveDraftWidget(draggingWidget, widget);
+                          setDraggingWidget(null);
+                          setDropTarget(null);
+                        }}
+                      >
+                        {editingLayout && widgetMeta && (
+                          <button
+                            className="overview-widget__drag-handle"
+                            type="button"
+                            draggable={!savingLayout}
+                            aria-label={`Drag ${widgetMeta.label} to reposition`}
+                            title={`Drag ${widgetMeta.label} to reposition`}
+                            onDragStart={(event) => {
+                              event.dataTransfer.effectAllowed = "move";
+                              event.dataTransfer.setData("text/plain", widget);
+                              setDraggingWidget(widget);
+                              setDropTarget(null);
+                            }}
+                            onDragEnd={() => {
+                              setDraggingWidget(null);
+                              setDropTarget(null);
+                            }}
+                          >
+                            <span aria-hidden="true">⠿</span>
+                            <span>Move {widgetMeta.label}</span>
+                          </button>
+                        )}
+                        {editingLayout && widgetMeta && (
+                          <button
+                            className="overview-widget__resize-handle"
+                            type="button"
+                            aria-label={`Resize ${widgetMeta.label}`}
+                            title="Drag left for half width or right for full width"
+                            onPointerDown={(event) => beginResize(event, widget)}
+                            onPointerMove={(event) => updateResize(event, widget)}
+                            onPointerUp={finishResize}
+                            onPointerCancel={finishResize}
+                          >
+                            <span aria-hidden="true">◢</span>
+                          </button>
+                        )}
+                        {renderMainWidget(widget)}
+                      </div>
+                    );
+                  })}
                 </div>
               ) : (
                 <Card><EmptyState title="No Overview widgets are showing" body="Open Settings to choose the widgets this business wants to see." /></Card>
@@ -613,8 +817,6 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
   const [layoutError, setLayoutError] = useState<string | null>(null);
   const [layoutStatus, setLayoutStatus] = useState<string | null>(null);
   const [savingLayout, setSavingLayout] = useState(false);
-  const [draggingOverviewWidget, setDraggingOverviewWidget] = useState<MainOverviewWidgetKey | null>(null);
-  const [overviewDropTarget, setOverviewDropTarget] = useState<MainOverviewWidgetKey | null>(null);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [calendarStatus, setCalendarStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -661,34 +863,6 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
       ...current,
       visible: { ...current.visible, [key]: visible },
     }));
-  };
-
-  const moveOverviewWidget = (key: MainOverviewWidgetKey, direction: -1 | 1) => {
-    setOverviewLayout((current) => {
-      const editableOrder = current.order.filter((candidate) => availableOverviewWidgets.has(candidate));
-      const index = editableOrder.indexOf(key);
-      const target = index + direction;
-      if (index < 0 || target < 0 || target >= editableOrder.length) return current;
-      const order = [...current.order];
-      const sourceIndex = order.indexOf(key);
-      const targetIndex = order.indexOf(editableOrder[target]);
-      [order[sourceIndex], order[targetIndex]] = [order[targetIndex], order[sourceIndex]];
-      return { ...current, order };
-    });
-  };
-
-  const reorderOverviewWidget = (source: MainOverviewWidgetKey, target: MainOverviewWidgetKey) => {
-    if (source === target) return;
-    setOverviewLayout((current) => {
-      const sourceIndex = current.order.indexOf(source);
-      const targetIndex = current.order.indexOf(target);
-      if (sourceIndex < 0 || targetIndex < 0) return current;
-      const order = [...current.order];
-      const [moved] = order.splice(sourceIndex, 1);
-      const nextTargetIndex = order.indexOf(target);
-      order.splice(nextTargetIndex, 0, moved);
-      return { ...current, order };
-    });
   };
 
   const saveOverviewLayout = async (event: React.FormEvent) => {
@@ -789,38 +963,15 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
           title="Dashboard layout"
           action={<Link className="table__link" to={`/b/${businessId}`}>Preview Overview</Link>}
         >
-          <p className="settings-card-copy">Choose what appears on this business’s Overview. These changes are shared with everyone who can access this business—not saved only on one person’s computer.</p>
+          <p className="settings-card-copy">Choose what appears on this business’s Overview. Rearrange the actual widgets directly on the Overview page with Customize layout. These changes are shared with everyone who can access this business—not saved only on one person’s computer.</p>
           <form onSubmit={saveOverviewLayout} noValidate>
             <div className="dashboard-layout-list" aria-label="Overview widgets">
-              {overviewLayout.order.filter((key) => availableOverviewWidgets.has(key)).map((key, index, editableOrder) => {
+              {overviewLayout.order.filter((key) => availableOverviewWidgets.has(key)).map((key) => {
                 const widget = MAIN_OVERVIEW_WIDGETS.find((item) => item.key === key);
                 if (!widget || !availableOverviewWidgets.has(key)) return null;
                 return (
-                  <div
-                    className={`dashboard-layout-row dashboard-layout-row--draggable${draggingOverviewWidget === key ? " dashboard-layout-row--dragging" : ""}${overviewDropTarget === key && draggingOverviewWidget !== key ? " dashboard-layout-row--drop-target" : ""}`}
-                    key={key}
-                    draggable={!readOnly && !savingLayout}
-                    onDragStart={(event) => {
-                      event.dataTransfer.effectAllowed = "move";
-                      event.dataTransfer.setData("text/plain", key);
-                      setDraggingOverviewWidget(key);
-                      setOverviewDropTarget(null);
-                    }}
-                    onDragOver={(event) => event.preventDefault()}
-                    onDragEnter={() => setOverviewDropTarget(key)}
-                    onDrop={(event) => {
-                      event.preventDefault();
-                      if (draggingOverviewWidget) reorderOverviewWidget(draggingOverviewWidget, key);
-                      setDraggingOverviewWidget(null);
-                      setOverviewDropTarget(null);
-                    }}
-                    onDragEnd={() => {
-                      setDraggingOverviewWidget(null);
-                      setOverviewDropTarget(null);
-                    }}
-                  >
+                  <div className="dashboard-layout-row" key={key}>
                     <label className="dashboard-layout-row__toggle">
-                      <span className="dashboard-layout-row__drag" title="Drag to reorder" aria-hidden="true">⠿</span>
                       <input
                         type="checkbox"
                         checked={overviewLayout.visible[key]}
@@ -829,10 +980,6 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
                       />
                       <span><strong>{widget.label}</strong><small>{widget.description}</small></span>
                     </label>
-                    <div className="dashboard-layout-row__actions" aria-label={`Move ${widget.label}`}>
-                      <button className="btn btn--small" type="button" disabled={readOnly || savingLayout || index === 0} onClick={() => moveOverviewWidget(key, -1)} aria-label={`Move ${widget.label} up`}>↑</button>
-                      <button className="btn btn--small" type="button" disabled={readOnly || savingLayout || index === editableOrder.length - 1} onClick={() => moveOverviewWidget(key, 1)} aria-label={`Move ${widget.label} down`}>↓</button>
-                    </div>
                   </div>
                 );
               })}
@@ -920,7 +1067,7 @@ export function ClientDashboardRoutes({
 
   return (
     <Routes>
-      <Route index element={<Overview businessId={businessId} modules={modules} />} />
+      <Route index element={<Overview businessId={businessId} modules={modules} readOnly={readOnly} />} />
       <Route path="leads" element={<Leads businessId={businessId} readOnly={readOnly} />} />
       <Route path="conversations" element={<Conversations businessId={businessId} />} />
       <Route path="appointments" element={<Appointments businessId={businessId} readOnly={readOnly} />} />

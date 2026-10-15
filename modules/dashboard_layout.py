@@ -23,6 +23,13 @@ OVERVIEW_WIDGETS = (
 MAIN_OVERVIEW_WIDGETS = OVERVIEW_WIDGETS[:-1]
 DEFAULT_OVERVIEW_ORDER = list(MAIN_OVERVIEW_WIDGETS)
 DEFAULT_SERVICES_POSITION = "right"
+WIDGET_SIZES = ("standard", "wide")
+DEFAULT_WIDGET_SIZES = {
+    "stats": "wide",
+    "recent_leads": "standard",
+    "appointments": "standard",
+    "recent_conversations": "wide",
+}
 
 
 def available_overview_widgets(enabled_modules: set[str]) -> set[str]:
@@ -61,10 +68,18 @@ def normalize_overview_layout(raw: object, enabled_modules: set[str]) -> dict[st
     position = source.get("services_position")
     services_position = position if position in {"left", "right"} else DEFAULT_SERVICES_POSITION
 
+    raw_sizes = source.get("sizes")
+    size_source = raw_sizes if isinstance(raw_sizes, dict) else {}
+    sizes = {
+        key: size_source.get(key) if size_source.get(key) in WIDGET_SIZES else DEFAULT_WIDGET_SIZES[key]
+        for key in MAIN_OVERVIEW_WIDGETS
+    }
+
     return {
         "order": order,
         "visible": visible,
         "services_position": services_position,
+        "sizes": sizes,
         "available_widgets": [key for key in OVERVIEW_WIDGETS if key in available_overview_widgets(enabled_modules)],
     }
 
@@ -94,6 +109,7 @@ def save_for_business(
         "order": normalized["order"],
         "visible": normalized["visible"],
         "services_position": normalized["services_position"],
+        "sizes": normalized["sizes"],
     }
 
     settings = deepcopy(business.settings or {})
