@@ -56,7 +56,7 @@ def _check_env_vars() -> None:
 _check_env_vars()
 
 # --- Module imports (after load_dotenv so env vars are available) --------
-from modules import conversation_store, compliance, conversation_policy, intake_engine, menu_text, missed_call, openai_helper, sheets_helper, tenancy, twilio_helper
+from modules import conversation_store, compliance, conversation_policy, date_resolution, intake_engine, menu_text, missed_call, openai_helper, sheets_helper, tenancy, twilio_helper
 from modules.business_hours import get_greeting, is_business_hours
 from modules.profiles import PROFILES, match_menu_selection
 from modules.db import init_db, session_scope, get_database_url, is_sqlite
@@ -425,16 +425,27 @@ def _handle_sms(
         conversation_store.touch(db, session)
         return finish(reply_text)
 
-    ai_result = openai_helper.get_ai_response(
-        session.history,
-        profile=profile,
-        is_demo=runtime.is_demo,
-        is_business_hours=is_business_hours(runtime.settings.get("business_hours")),
-        business_name=runtime.business_name,
-        next_field=next_field,
-    )
+    with openai_helper.request_temporal_context(
+        date_resolution.business_time_context(runtime.settings)
+    ):
+        ai_result = openai_helper.get_ai_response(
+            session.history,
+            profile=profile,
+            is_demo=runtime.is_demo,
+            is_business_hours=is_business_hours(runtime.settings.get("business_hours")),
+            business_name=runtime.business_name,
+            next_field=next_field,
+        )
 
-    validated_fields = intake_engine.validate_extracted_fields(profile, ai_result.get("extracted_fields", {}))
+    date_field_keys = {profile.preference_field_key}
+    if "event_date" in profile.field_keys():
+        date_field_keys.add("event_date")
+    resolved_fields = date_resolution.normalize_relative_date_fields(
+        ai_result.get("extracted_fields", {}),
+        date_field_keys=date_field_keys,
+        settings=runtime.settings,
+    )
+    validated_fields = intake_engine.validate_extracted_fields(profile, resolved_fields)
     conversation_store.merge_fields(db, session, validated_fields, allowed_keys=set(profile.field_keys()))
 
     topic_status = ai_result.get("topic_status", "on_topic")

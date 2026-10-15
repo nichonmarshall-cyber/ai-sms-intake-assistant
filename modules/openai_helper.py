@@ -12,6 +12,8 @@ mechanic-only version.
 import os
 import json
 import logging
+from contextlib import contextmanager
+from contextvars import ContextVar
 from openai import OpenAI
 
 from modules.profiles import Profile
@@ -20,6 +22,21 @@ from modules.prompt import build_system_prompt
 logger = logging.getLogger(__name__)
 
 _client = None
+_temporal_context: ContextVar[str] = ContextVar("temporal_context", default="")
+
+
+@contextmanager
+def request_temporal_context(value: str):
+    """Attach tenant-local time only to this inbound SMS request.
+
+    A ContextVar keeps concurrent Gunicorn workers isolated and preserves the
+    existing get_ai_response call contract used by integrations and tests.
+    """
+    token = _temporal_context.set(value)
+    try:
+        yield
+    finally:
+        _temporal_context.reset(token)
 
 
 def _get_client() -> OpenAI:
@@ -150,6 +167,7 @@ def get_ai_response(
         is_business_hours=is_business_hours,
         business_name=business_name,
         next_field=next_field,
+        temporal_context=_temporal_context.get(),
     )
     timeout_seconds = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "10"))
 

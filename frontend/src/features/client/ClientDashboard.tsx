@@ -426,20 +426,10 @@ function Overview({ businessId, modules }: { businessId: string; modules: NavMod
     };
   }, [businessId]);
 
-  const maxActivity = Math.max(1, ...(data?.lead_activity.map((item) => item.count) ?? [1]));
   const enabledModules = data?.enabled_modules ?? modules;
   const enabledKeys = new Set(enabledModules.map((module) => module.key));
   const summaryModules = enabledModules.filter((module) => module.key !== "overview").slice(0, 6);
   const showIntakeStats = ["leads", "conversations", "appointments", "ai_intake"].some((key) => enabledKeys.has(key));
-  const activityPoints = (data?.lead_activity ?? []).map((item, index, items) => ({
-    ...item,
-    x: items.length === 1 ? 300 : 24 + (index * 552) / (items.length - 1),
-    y: 150 - (item.count / maxActivity) * 112,
-  }));
-  const activityLine = activityPoints.map((point) => `${point.x},${point.y}`).join(" ");
-  const activityArea = activityPoints.length
-    ? `M ${activityPoints[0].x} 150 L ${activityPoints.map((point) => `${point.x} ${point.y}`).join(" L ")} L ${activityPoints[activityPoints.length - 1].x} 150 Z`
-    : "";
 
   return (
     <>
@@ -451,7 +441,8 @@ function Overview({ businessId, modules }: { businessId: string; modules: NavMod
       {loading && <Loading rows={3} />}
       {error && <ErrorState body={error} />}
       {data && (
-        <>
+        <div className="overview-dashboard">
+          <main className="overview-dashboard__main">
           {showIntakeStats && <div className="stat-grid overview-stat-grid">
             {enabledKeys.has("leads") && <Stat label="New leads" value={data.metrics.new_leads} icon="♙" />}
             {enabledKeys.has("conversations") && <Stat label="Open conversations" value={data.metrics.open_conversations} icon="◌" />}
@@ -459,6 +450,13 @@ function Overview({ businessId, modules }: { businessId: string; modules: NavMod
             {enabledKeys.has("ai_intake") && <Stat label="Missed calls handled" value={data.metrics.missed_calls_handled} icon="↗" />}
           </div>}
 
+          <section className="overview-live-feed" aria-labelledby="live-business-feed">
+            <div className="overview-section-heading">
+              <div>
+                <h2 id="live-business-feed">Live business feed</h2>
+                <p>Recent leads, conversations, and appointment requests.</p>
+              </div>
+            </div>
           {(enabledKeys.has("leads") || enabledKeys.has("appointments")) && <div className="overview-live-grid overview-live-grid--primary">
             {enabledKeys.has("leads") &&
             <Card title="Recent leads" action={<Link className="table__link" to="leads">View all</Link>}>
@@ -468,7 +466,7 @@ function Overview({ businessId, modules }: { businessId: string; modules: NavMod
                 <div className="table-scroll">
                   <table className="table overview-leads-table">
                     <thead><tr><th>Customer</th><th>Service request</th><th>Source</th><th>Received</th><th>Status</th></tr></thead>
-                    <tbody>{data.recent_leads.map((lead) => (
+                    <tbody>{data.recent_leads.slice(0, 4).map((lead) => (
                       <tr key={lead.id}>
                         <td><Link className="table__link" to="leads">{lead.customer_name || lead.phone}</Link></td>
                         <td>{lead.service_request || lead.business_summary || "No service summary"}</td>
@@ -508,14 +506,14 @@ function Overview({ businessId, modules }: { businessId: string; modules: NavMod
             </Card>}
           </div>}
 
-          {(enabledKeys.has("conversations") || enabledKeys.has("analytics")) && <div className="overview-live-grid overview-live-grid--activity">
+          {enabledKeys.has("conversations") && <div className="overview-live-grid overview-live-grid--activity overview-live-grid--single">
             {enabledKeys.has("conversations") &&
             <Card title="Recent conversations" action={<Link className="table__link" to="conversations">View all</Link>}>
               {data.recent_conversations.length === 0 ? (
                 <EmptyState title="No conversations yet" body="SMS intake conversations will appear here." />
               ) : (
                 <div className="overview-list">
-                  {data.recent_conversations.map((conversation) => (
+                  {data.recent_conversations.slice(0, 3).map((conversation) => (
                     <Link className="overview-list__item" to="conversations" key={conversation.id}>
                       <span className="conversation-avatar" aria-hidden="true">{(conversation.customer_name || conversation.phone).slice(0, 2).toUpperCase()}</span>
                       <span className="overview-list__copy"><strong>{conversation.customer_name || conversation.phone}</strong><small>{conversation.last_message || "No stored message"}</small></span>
@@ -525,33 +523,17 @@ function Overview({ businessId, modules }: { businessId: string; modules: NavMod
                 </div>
               )}
             </Card>}
-            {enabledKeys.has("analytics") &&
-            <Card title="Lead activity · last 7 days">
-              <div className="activity-line-chart" role="img" aria-label="New leads per day for the last seven days">
-                <svg viewBox="0 0 600 170" preserveAspectRatio="none" aria-hidden="true">
-                  {[38, 75, 112, 150].map((y) => <line key={y} x1="24" x2="576" y1={y} y2={y} className="activity-line-chart__grid" />)}
-                  {activityArea && <path d={activityArea} className="activity-line-chart__area" />}
-                  {activityLine && <polyline points={activityLine} className="activity-line-chart__line" />}
-                  {activityPoints.map((point) => <circle key={point.date} cx={point.x} cy={point.y} r="5" className="activity-line-chart__point" />)}
-                </svg>
-                <div className="activity-line-chart__labels">
-                  {data.lead_activity.map((item) => <span key={item.date}>{new Date(`${item.date}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" })}</span>)}
-                </div>
-              </div>
-            </Card>}
-
           </div>}
-          {(enabledKeys.has("leads") || enabledKeys.has("analytics")) && <Card title="Lead sources">
-            {data.lead_sources.length === 0 ? <EmptyState title="No source data" body="Lead attribution will appear as intake records are captured." /> : <div className="source-list">{data.lead_sources.map((item) => <div key={item.source}><span>{item.source.replace(/_/g, " ")}</span><strong>{item.count}</strong></div>)}</div>}
-          </Card>}
+          </section>
+          </main>
 
-          {summaryModules.length > 0 && <section className="overview-services">
-            <div className="overview-section-heading"><div><h2>Your services</h2><p>Only the modules enabled for this business appear here.</p></div></div>
-            <div className="overview-module-grid">
+          {summaryModules.length > 0 && <aside className="overview-services overview-dashboard__services" aria-labelledby="your-services">
+            <div className="overview-section-heading"><div><h2 id="your-services">Your services</h2><p>Only the modules enabled for this business appear here.</p></div></div>
+            <div className="overview-module-grid overview-module-grid--rail">
               {summaryModules.map((module) => <OverviewModuleCard key={module.key} module={module} data={data} />)}
             </div>
-          </section>}
-        </>
+          </aside>}
+        </div>
       )}
     </>
   );

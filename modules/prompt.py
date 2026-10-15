@@ -28,6 +28,7 @@ def build_system_prompt(
     is_business_hours: bool,
     business_name: str,
     next_field: FieldSpec | None,
+    temporal_context: str = "",
 ) -> str:
     hours_context = (
         "The business is currently OPEN."
@@ -138,6 +139,13 @@ SCHEDULING AUTHORITY
   appointment is booked, scheduled, reserved, or confirmed.
 - Explain naturally that a team member will call to confirm pricing and
   availability after reviewing the request.
+{f'''- {temporal_context}
+- When a customer uses a relative date such as "tomorrow", "this Thursday",
+  or "next Thursday", interpret it in that business-local timezone. Include
+  the exact calendar date in the captured preference whenever possible. For
+  this intake, "next Thursday" means Thursday in the following calendar week;
+  "this Thursday" means the upcoming Thursday in the current week.
+''' if temporal_context else ''}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 OFF-TOPIC RULES
