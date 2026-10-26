@@ -5,7 +5,7 @@ import { useAuth } from "../../lib/auth";
 import { Field, Loading } from "../../components";
 
 export function LoginPage() {
-  const { me, loading, login } = useAuth();
+  const { me, loading, login, demoLogin } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -38,6 +38,14 @@ export function LoginPage() {
     } finally {
       setSubmitting(false);
     }
+  };
+
+  const openDemo = async () => {
+    setSubmitting(true);
+    setError(null);
+    try { await demoLogin(); }
+    catch (err) { setError(err instanceof Error ? err.message : "Unable to open the demo."); }
+    finally { setSubmitting(false); }
   };
 
   return (
@@ -86,6 +94,10 @@ export function LoginPage() {
         <button type="submit" className="btn btn--primary" style={{ width: "100%" }} disabled={submitting}>
           {submitting ? "Signing in…" : "Sign in"}
         </button>
+        <button type="button" className="btn demo-login-button" style={{ width: "100%" }} disabled={submitting} onClick={() => void openDemo()}>
+          View interactive demo
+        </button>
+        <p className="demo-login-note">Explore a read-only dashboard with fictional data. No account needed.</p>
         <Link className="auth-link" to="/forgot-password">Forgot your password?</Link>
       </form>
     </div>

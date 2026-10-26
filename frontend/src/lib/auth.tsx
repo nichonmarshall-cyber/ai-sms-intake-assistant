@@ -8,6 +8,7 @@ interface AuthState {
   loading: boolean;
   error: string | null;
   login: (email: string, password: string) => Promise<void>;
+  demoLogin: () => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
 }
@@ -46,6 +47,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [refresh],
   );
 
+  const demoLogin = useCallback(async () => {
+    await api.post("/api/auth/demo");
+    await refresh();
+  }, [refresh]);
+
   const logout = useCallback(async () => {
     try {
       await api.post("/api/auth/logout");
@@ -55,8 +61,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo(
-    () => ({ me, loading, error, login, logout, refresh }),
-    [me, loading, error, login, logout, refresh],
+    () => ({ me, loading, error, login, demoLogin, logout, refresh }),
+    [me, loading, error, login, demoLogin, logout, refresh],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

@@ -14,6 +14,7 @@ from sqlalchemy import Integer, String, cast, func, or_, select
 from modules import calendar_service, entitlements, google_visibility, website_monitoring
 from modules.auth.decorators import require_business_access, require_module
 from modules.models import AppointmentRequest, Business, ConversationSession, Lead, MissedCallEvent
+from modules.demo_workspace import DEMO_BUSINESS_ID
 from modules.serializers import (
     appointment_dto,
     business_dto,
@@ -64,6 +65,16 @@ def _website_health_payload(business: Business) -> dict:
     """Resolve one business's configured monitor without exposing provider credentials."""
     config = (business.settings or {}).get("website") or {}
     website_url = config.get("url") or ""
+    if business.id == DEMO_BUSINESS_ID:
+        return {
+            "website_url": website_url,
+            "provider": {"name": "UptimeRobot", "status": "connected"},
+            "monitor": {
+                "id": "demo-monitor", "name": "Northstar Auto Care demo website", "url": website_url,
+                "status": "up", "uptime_7d": "100.00", "uptime_30d": "99.98",
+                "uptime_90d": "99.96", "average_response_ms": 214,
+            },
+        }
     if not website_monitoring.is_configured():
         return {
             "website_url": website_url,
@@ -101,6 +112,8 @@ def website_health(business_id: str):
 @require_module("local_seo")
 def local_seo(business_id: str):
     business = g.db.get(Business, business_id)
+    if business_id == DEMO_BUSINESS_ID:
+        return jsonify({"status": "connected", "property": "sc-domain:northstar-demo.example", "data": {"period": {"start": "2026-09-26", "end": "2026-10-26"}, "clicks": 186, "impressions": 5420, "ctr": 0.0343, "position": 8.2, "queries": [{"query": "auto repair near me", "clicks": 58, "impressions": 1320}, {"query": "brake repair denton", "clicks": 34, "impressions": 710}, {"query": "ac repair for cars", "clicks": 29, "impressions": 604}]}}), 200
     property_url = ((business.settings or {}).get("google_visibility") or {}).get("search_property") or ""
     if not property_url or not os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip():
         return jsonify({"status": "not_connected", "property": property_url, "data": None}), 200
@@ -117,6 +130,8 @@ def local_seo(business_id: str):
 @require_module("reviews")
 def business_reviews(business_id: str):
     business = g.db.get(Business, business_id)
+    if business_id == DEMO_BUSINESS_ID:
+        return jsonify({"status": "connected", "profile_url": "https://example.com", "data": {"average_rating": 4.8, "total_reviews": 127, "recent": [{"id": "demo-review-1", "author": "Taylor R.", "rating": "five_star", "comment": "Friendly service and clear updates from start to finish.", "updated_at": "2026-10-22T00:00:00+00:00", "reply": "Thank you for the feedback!"}, {"id": "demo-review-2", "author": "Chris M.", "rating": "five_star", "comment": "Easy scheduling and the repair was explained clearly.", "updated_at": "2026-10-18T00:00:00+00:00", "reply": "We appreciate your visit."}]}}), 200
     config = (business.settings or {}).get("google_visibility") or {}
     location = config.get("profile_location") or ""
     profile_url = config.get("profile_url") or ""

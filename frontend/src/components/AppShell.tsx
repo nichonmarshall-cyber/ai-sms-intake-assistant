@@ -20,11 +20,13 @@ export function AppShell({
   sections,
   contextLabel,
   modeSwitch,
+  demoNotice,
   children,
 }: {
   sections: NavSection[];
   contextLabel: string;
   modeSwitch?: { label: string; to: string };
+  demoNotice?: boolean;
   children: ReactNode;
 }) {
   const { me, logout } = useAuth();
@@ -129,6 +131,7 @@ export function AppShell({
             <span aria-hidden="true">☰</span>
           </button>
           <strong style={{ fontSize: 13 }}>{contextLabel}</strong>
+          {demoNotice && <span className="demo-banner">Demo · fictional data · read-only</span>}
           <div className="topbar__spacer" />
           {modeSwitch && (
             <Link className="btn mode-switch" to={modeSwitch.to}>
