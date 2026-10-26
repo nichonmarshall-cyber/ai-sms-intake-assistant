@@ -87,6 +87,7 @@ function ClientWorkspace() {
   if (!modules) return <Loading rows={5} label="Loading your dashboard" />;
 
   const readOnly = Boolean(me?.is_read_only) || role === "viewer";
+  const isDemo = businessId === "ntx-product-demo";
 
   // Navigation is built from server-supplied entitlements, so a module the
   // business is not entitled to never appears -- and its API refuses it too.
@@ -109,6 +110,7 @@ function ClientWorkspace() {
     <AppShell
       sections={sections}
       contextLabel={`Client view · ${businessName}`}
+      demoNotice={isDemo}
       modeSwitch={me?.user.platform_role === "admin"
         ? { label: "Return to admin", to: `/admin/businesses/${businessId}` }
         : undefined}

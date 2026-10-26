@@ -8,6 +8,7 @@ from flask import Blueprint, g, jsonify, request
 from sqlalchemy import select
 
 from modules.auth import mailer, password_reset, passwords, sessions, throttle
+from modules.demo_workspace import ensure_demo_workspace
 from modules.auth.decorators import (
     client_ip,
     is_platform_admin,
@@ -26,6 +27,21 @@ logger = logging.getLogger(__name__)
 auth_bp = Blueprint("auth", __name__, url_prefix="/api/auth")
 
 GENERIC_LOGIN_FAILURE = "Invalid email or password."
+
+
+@auth_bp.post("/demo")
+def demo_login():
+    """Start an isolated, read-only session containing fictional product data."""
+    db = session_scope()
+    try:
+        user, _business = ensure_demo_workspace(db)
+        issued = sessions.create_session(db, user_id=user.id, raw_ip=client_ip(), user_agent=request.headers.get("User-Agent"))
+        db.commit()
+        response = jsonify({"user": user_dto(user)})
+        sessions.set_auth_cookies(response, issued)
+        return response, 200
+    finally:
+        db.close()
 
 
 @auth_bp.post("/login")
