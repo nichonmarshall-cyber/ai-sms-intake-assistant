@@ -1,4 +1,41 @@
-# NTX Automation Co. SMS Intake Assistant
+# NTX AI SMS Intake Assistant
+
+**Capture missed calls. Qualify inquiries. Give businesses a clear next step.**
+
+[NTX company website](https://ntxautomationco.com/) · [Public SMS demo instructions](https://ntxautomationco.com/demo) · [Private client dashboard login](https://app.ntxautomationco.com/login) · **Status: active development**
+
+![NTX AI intake dashboard showcase](https://nichonmarshall-cyber.github.io/assets/projects/ntx-overview.png)
+
+## Product overview
+
+An SMS intake service for local businesses built with Python, Twilio, OpenAI, and a persistent database. It handles required message keywords, gathers structured requests, and routes completed information to a business. The broader product includes a separate React client dashboard and opt-in service modules.
+
+**The public demo is not a real booking or service commitment.** Inbound consent and opt-out behavior matter; customer messages must not be treated as marketing consent for unrelated programs.
+
+### Key engineering decisions
+
+| Area | Approach |
+| --- | --- |
+| Conversations | Application-controlled intake workflow; model output validated before use |
+| Delivery | Twilio webhook validation, opt-out handling, missed-call safeguards |
+| Storage | SQLAlchemy, PostgreSQL for deployed environments, Alembic migrations |
+| Dashboard | Separate client-facing interface and server-side access controls |
+| Scheduling | Preferences remain pending until reviewed and explicitly approved |
+| Deployment | Render service configuration documented separately |
+
+### Start here
+
+- [Deployment playbook](DEPLOY.md) — hosting and Twilio cutover
+- [Dashboard implementation](DASHBOARD_HANDOFF.md) — UI and API handoff notes
+- [Configuration example](.env.example) — environment variables (no actual secrets)
+- [Tests](tests/) — automated behavioral checks
+
+For local development, follow **Setup** below. Avoid live Twilio webhook testing with real customer numbers or production credentials. Never commit message histories, database exports, or customer data.
+
+---
+
+## Detailed architecture, flows and operations
+
 
 An AI-powered SMS intake assistant. Ships in two modes:
 
@@ -383,7 +420,7 @@ The AI will never:
 - Google Sheets export is best-effort and not built for high volume; Postgres is always the source of truth
 - Menu name-matching is alias/substring based, not fuzzy/typo-tolerant beyond that
 - Rate limiting is per-process (`flask-limiter` memory storage) -- fine for a single Render instance, would need shared storage (e.g. Redis) if scaled to multiple instances
-- No dashboard/calendar/CRM integration -- out of scope for this phase by design
+- Some integrations and tenant workflows remain feature-flagged and require per-client validation before being treated as production-ready
 
 ---
 
