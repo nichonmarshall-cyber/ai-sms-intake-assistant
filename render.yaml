@@ -23,7 +23,9 @@ services:
       - key: DEFAULT_TIMEZONE
         value: America/Chicago
       - key: DATABASE_URL
-        sync: false
+        fromDatabase:
+          name: ntx-sms-intake-db
+          property: connectionString
       - key: SECRET_KEY
         generateValue: true
       - key: RESET_ENDPOINT_ENABLED

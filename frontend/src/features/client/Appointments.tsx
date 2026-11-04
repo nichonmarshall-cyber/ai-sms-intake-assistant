@@ -126,6 +126,8 @@ export function Appointments({ businessId, readOnly }: { businessId: string; rea
                     <p>{appointment.service_request || "Service appointment"}</p>
                     <small>Requested: {appointment.requested_time_text || "No preference provided"}</small>
                     {appointment.scheduled_start_at && <small>Scheduled: {formatDate(appointment.scheduled_start_at)} · {appointment.duration_minutes} minutes</small>}
+                    {appointment.approval_notification.sent && <small>Customer approval message sent {formatDate(appointment.approval_notification.sent_at)}</small>}
+                    {appointment.approval_notification.error && <p className="appointment-row__error">Appointment scheduled, but the customer message was not sent: {appointment.approval_notification.error}</p>}
                     {appointment.provider_error && <p className="appointment-row__error">{appointment.provider_error}</p>}
                   </div>
                   {(appointment.status === "pending" || appointment.status === "sync_failed") && (

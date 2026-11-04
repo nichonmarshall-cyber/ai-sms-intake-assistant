@@ -20,13 +20,11 @@ export function AppShell({
   sections,
   contextLabel,
   modeSwitch,
-  demoNotice,
   children,
 }: {
   sections: NavSection[];
   contextLabel: string;
   modeSwitch?: { label: string; to: string };
-  demoNotice?: boolean;
   children: ReactNode;
 }) {
   const { me, logout } = useAuth();
@@ -68,13 +66,10 @@ export function AppShell({
         aria-label="Primary"
         id="primary-navigation"
       >
-        <Link className="brand" to="/" aria-label="NTX Automation Co. dashboard home">
-          <img
-            className="brand__logo"
-            src="/assets/ntx-logo-lockup.png"
-            alt="NTX Automation Co."
-          />
-        </Link>
+        <div className="brand">
+          <span className="brand__mark">NTX</span>
+          <span className="brand__sub">Automation Co.</span>
+        </div>
 
         {sections.map((section) => (
           <div className="nav" key={section.heading}>
@@ -131,7 +126,6 @@ export function AppShell({
             <span aria-hidden="true">☰</span>
           </button>
           <strong style={{ fontSize: 13 }}>{contextLabel}</strong>
-          {demoNotice && <span className="demo-banner">Demo · fictional data · read-only</span>}
           <div className="topbar__spacer" />
           {modeSwitch && (
             <Link className="btn mode-switch" to={modeSwitch.to}>
@@ -140,14 +134,7 @@ export function AppShell({
             </Link>
           )}
           <div className="topbar__user">
-            <span className="topbar__avatar" aria-hidden="true">
-              {(me?.user.display_name ?? me?.user.email ?? "NTX")
-                .split(/\s+/)
-                .slice(0, 2)
-                .map((part) => part[0]?.toUpperCase())
-                .join("")}
-            </span>
-            <span className="topbar__identity">{me?.user.display_name ?? me?.user.email}</span>
+            <span>{me?.user.display_name ?? me?.user.email}</span>
             <button type="button" className="btn" onClick={handleLogout}>
               Sign out
             </button>

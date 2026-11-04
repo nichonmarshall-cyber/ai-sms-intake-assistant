@@ -91,6 +91,13 @@ def appointment_dto(appointment) -> dict:
         "calendar_event_id": appointment.calendar_event_id,
         "calendar_event_link": appointment.calendar_event_link,
         "provider_error": appointment.provider_error,
+        "approval_notification": {
+            "sent": bool(appointment.approval_message_sid),
+            "message_sid": appointment.approval_message_sid,
+            "sent_at": appointment.approval_message_sent_at.isoformat()
+            if appointment.approval_message_sent_at else None,
+            "error": appointment.approval_message_error,
+        },
         "created_at": _iso(appointment.created_at),
         "updated_at": _iso(appointment.updated_at),
     }

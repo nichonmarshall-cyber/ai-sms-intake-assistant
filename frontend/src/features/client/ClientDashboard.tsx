@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Link, Route, Routes, useParams } from "react-router-dom";
 import { api } from "../../lib/api";
 import type {
@@ -32,7 +32,6 @@ import { LocalSEO, Reviews } from "./GoogleVisibility";
 
 interface OverviewPayload {
   enabled_modules: NavModule[];
-  dashboard_layout: DashboardLayout;
   metrics: {
     total_leads: number;
     new_leads: number;
@@ -61,50 +60,6 @@ interface OverviewPayload {
     } | null;
   } | null;
   unavailable: UnavailableMetric[];
-}
-
-type OverviewWidgetKey = "stats" | "recent_leads" | "appointments" | "recent_conversations" | "services";
-type MainOverviewWidgetKey = Exclude<OverviewWidgetKey, "services">;
-type OverviewWidgetSize = "standard" | "wide";
-type ServicesPosition = "top" | "right" | "bottom" | "left";
-
-interface OverviewLayout {
-  order: MainOverviewWidgetKey[];
-  visible: Record<OverviewWidgetKey, boolean>;
-  services_position: ServicesPosition;
-  sizes: Record<MainOverviewWidgetKey, OverviewWidgetSize>;
-  available_widgets: OverviewWidgetKey[];
-}
-
-interface DashboardLayout {
-  overview: OverviewLayout;
-}
-
-const MAIN_OVERVIEW_WIDGETS: { key: MainOverviewWidgetKey; label: string; description: string }[] = [
-  { key: "stats", label: "Key metrics", description: "New leads, conversations, requests, and missed calls." },
-  { key: "recent_leads", label: "Recent leads", description: "Newest captured opportunities." },
-  { key: "appointments", label: "Appointment requests", description: "Scheduling requests waiting for review." },
-  { key: "recent_conversations", label: "Recent conversations", description: "Latest active SMS intake conversations." },
-];
-
-function defaultOverviewLayout(): OverviewLayout {
-  return {
-    order: MAIN_OVERVIEW_WIDGETS.map((widget) => widget.key),
-    visible: { stats: true, recent_leads: true, appointments: true, recent_conversations: true, services: true },
-    services_position: "right",
-    sizes: { stats: "wide", recent_leads: "standard", appointments: "standard", recent_conversations: "wide" },
-    available_widgets: ["stats", "recent_leads", "appointments", "recent_conversations", "services"],
-  };
-}
-
-function cloneOverviewLayout(layout: OverviewLayout): OverviewLayout {
-  return {
-    ...layout,
-    order: [...layout.order],
-    visible: { ...layout.visible },
-    sizes: { ...layout.sizes },
-    available_widgets: [...layout.available_widgets],
-  };
 }
 
 interface LeadsPayload extends Paged<Lead> {
@@ -447,25 +402,11 @@ function OverviewModuleCard({ module, data }: { module: NavModule; data: Overvie
   );
 }
 
-function Overview({ businessId, modules, readOnly }: { businessId: string; modules: NavModule[]; readOnly: boolean }) {
+function Overview({ businessId, modules }: { businessId: string; modules: NavModule[] }) {
   const heading = useFocusOnMount<HTMLHeadingElement>();
   const [data, setData] = useState<OverviewPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [editingLayout, setEditingLayout] = useState(false);
-  const [draftLayout, setDraftLayout] = useState<OverviewLayout | null>(null);
-  const [savingLayout, setSavingLayout] = useState(false);
-  const [layoutError, setLayoutError] = useState<string | null>(null);
-  const [layoutStatus, setLayoutStatus] = useState<string | null>(null);
-  const [draggingWidget, setDraggingWidget] = useState<MainOverviewWidgetKey | null>(null);
-  const [dropTarget, setDropTarget] = useState<MainOverviewWidgetKey | null>(null);
-  const [resizingWidget, setResizingWidget] = useState<MainOverviewWidgetKey | null>(null);
-  const resizeStart = useRef<{
-    widget: MainOverviewWidgetKey;
-    startX: number;
-    startSize: OverviewWidgetSize;
-    threshold: number;
-  } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -485,331 +426,112 @@ function Overview({ businessId, modules, readOnly }: { businessId: string; modul
     };
   }, [businessId]);
 
+  const maxActivity = Math.max(1, ...(data?.lead_activity.map((item) => item.count) ?? [1]));
   const enabledModules = data?.enabled_modules ?? modules;
   const enabledKeys = new Set(enabledModules.map((module) => module.key));
   const summaryModules = enabledModules.filter((module) => module.key !== "overview").slice(0, 6);
-  const savedLayout = data?.dashboard_layout.overview ?? defaultOverviewLayout();
-  const layout = editingLayout && draftLayout ? draftLayout : savedLayout;
-  const availableWidgets = new Set(layout.available_widgets);
-  const widgetVisible = (key: OverviewWidgetKey) => availableWidgets.has(key) && layout.visible[key];
-  const mainWidgets = layout.order.filter((key) => widgetVisible(key));
-
-  const beginLayoutEdit = () => {
-    setDraftLayout(cloneOverviewLayout(savedLayout));
-    setLayoutError(null);
-    setLayoutStatus(null);
-    setEditingLayout(true);
-  };
-
-  const cancelLayoutEdit = () => {
-    setEditingLayout(false);
-    setDraftLayout(null);
-    setDraggingWidget(null);
-    setDropTarget(null);
-    setResizingWidget(null);
-    resizeStart.current = null;
-    setLayoutError(null);
-  };
-
-  const moveDraftWidget = (source: MainOverviewWidgetKey, target: MainOverviewWidgetKey) => {
-    if (source === target) return;
-    setDraftLayout((current) => {
-      if (!current) return current;
-      const sourceIndex = current.order.indexOf(source);
-      const targetIndex = current.order.indexOf(target);
-      if (sourceIndex < 0 || targetIndex < 0) return current;
-      const nextOrder = [...current.order];
-      nextOrder.splice(sourceIndex, 1);
-      nextOrder.splice(targetIndex, 0, source);
-      return { ...current, order: nextOrder };
-    });
-  };
-
-  const setServicesPosition = (servicesPosition: ServicesPosition) => {
-    setDraftLayout((current) => current ? {
-      ...current,
-      services_position: servicesPosition,
-    } : current);
-  };
-
-  const resizeDraftWidget = (widget: MainOverviewWidgetKey, size: OverviewWidgetSize) => {
-    setDraftLayout((current) => current ? {
-      ...current,
-      sizes: { ...current.sizes, [widget]: size },
-    } : current);
-  };
-
-  const beginResize = (event: React.PointerEvent<HTMLButtonElement>, widget: MainOverviewWidgetKey) => {
-    if (savingLayout) return;
-    const gridWidth = event.currentTarget.closest(".overview-widget-grid")?.getBoundingClientRect().width ?? 600;
-    resizeStart.current = {
-      widget,
-      startX: event.clientX,
-      startSize: layout.sizes[widget],
-      threshold: Math.max(72, gridWidth * 0.12),
-    };
-    event.currentTarget.setPointerCapture(event.pointerId);
-    setResizingWidget(widget);
-  };
-
-  const updateResize = (event: React.PointerEvent<HTMLButtonElement>, widget: MainOverviewWidgetKey) => {
-    const start = resizeStart.current;
-    if (!start || start.widget !== widget) return;
-    const deltaX = event.clientX - start.startX;
-    const nextSize: OverviewWidgetSize = deltaX >= start.threshold
-      ? "wide"
-      : deltaX <= -start.threshold
-        ? "standard"
-        : start.startSize;
-    resizeDraftWidget(widget, nextSize);
-  };
-
-  const finishResize = () => {
-    resizeStart.current = null;
-    setResizingWidget(null);
-  };
-
-  const saveLayout = async () => {
-    if (!draftLayout) return;
-    setLayoutError(null);
-    setLayoutStatus(null);
-    setSavingLayout(true);
-    try {
-      const payload = await api.patch<{ dashboard_layout: DashboardLayout }>(
-        `/api/dashboard/businesses/${businessId}/settings`,
-        { dashboard_layout: { overview: draftLayout } },
-      );
-      setData((current) => current ? { ...current, dashboard_layout: payload.dashboard_layout } : current);
-      setEditingLayout(false);
-      setDraftLayout(null);
-      setLayoutStatus("Overview layout saved for everyone at this business.");
-    } catch (err) {
-      setLayoutError(err instanceof Error ? err.message : "Could not save the Overview layout.");
-    } finally {
-      setSavingLayout(false);
-    }
-  };
-
-  const renderMainWidget = (widget: MainOverviewWidgetKey) => {
-    if (!data) return null;
-    switch (widget) {
-      case "stats":
-        return (
-          <div className="stat-grid overview-stat-grid">
-            {enabledKeys.has("leads") && <Stat label="New leads" value={data.metrics.new_leads} icon="♙" />}
-            {enabledKeys.has("conversations") && <Stat label="Open conversations" value={data.metrics.open_conversations} icon="◌" />}
-            {enabledKeys.has("appointments") && <Stat label="Pending approval" value={data.metrics.pending_approval} icon="◷" />}
-            {enabledKeys.has("ai_intake") && <Stat label="Missed calls handled" value={data.metrics.missed_calls_handled} icon="↗" />}
-          </div>
-        );
-      case "recent_leads":
-        return (
-          <Card title="Recent leads" action={<Link className="table__link" to="leads">View all</Link>}>
-            {data.recent_leads.length === 0 ? (
-              <EmptyState title="No leads yet" body="Captured leads will appear here." />
-            ) : (
-              <div className="table-scroll">
-                <table className="table overview-leads-table">
-                  <thead><tr><th>Customer</th><th>Service request</th><th>Source</th><th>Received</th><th>Status</th></tr></thead>
-                  <tbody>{data.recent_leads.slice(0, 4).map((lead) => (
-                    <tr key={lead.id}>
-                      <td><Link className="table__link" to="leads">{lead.customer_name || lead.phone}</Link></td>
-                      <td>{lead.service_request || lead.business_summary || "No service summary"}</td>
-                      <td><span className="lead-source"><span aria-hidden="true">●</span>{(lead.source || "SMS").replace(/_/g, " ")}</span></td>
-                      <td>{formatDate(lead.created_at)}</td>
-                      <td><Badge tone={leadTone(lead.workflow_status)}>{LEAD_STATUS_LABELS[lead.workflow_status]}</Badge></td>
-                    </tr>
-                  ))}</tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-        );
-      case "appointments":
-        return (
-          <Card title="Appointment requests" action={<Link className="table__link" to="appointments">View all</Link>}>
-            {data.appointment_requests.length === 0 ? (
-              <EmptyState title="No pending requests" body="New scheduling preferences will appear here." />
-            ) : (
-              <div className="overview-appointments">
-                {data.appointment_requests.map((appointment) => (
-                  <Link className="overview-appointment" to="appointments" key={appointment.id}>
-                    <span className="overview-appointment__date" aria-hidden="true">
-                      <small>{new Date(appointment.scheduled_start_at || appointment.created_at || Date.now()).toLocaleDateString(undefined, { month: "short" })}</small>
-                      <strong>{new Date(appointment.scheduled_start_at || appointment.created_at || Date.now()).getDate()}</strong>
-                      <small>{new Date(appointment.scheduled_start_at || appointment.created_at || Date.now()).toLocaleDateString(undefined, { weekday: "short" })}</small>
-                    </span>
-                    <span><strong>{appointment.customer_name || appointment.customer_phone}</strong><small>{appointment.service_request || "Service appointment"}</small><small>{appointment.requested_time_text || "Time not provided"}</small></span>
-                    <span className="btn btn--primary overview-appointment__action">Review &amp; schedule</span>
-                  </Link>
-                ))}
-              </div>
-            )}
-            <div className={data.calendar.connected ? "calendar-banner calendar-banner--ok calendar-banner--compact" : "calendar-banner calendar-banner--warn calendar-banner--compact"}>
-              <span>{data.calendar.connected ? "✓" : "!"}</span>
-              <strong>{data.calendar.connected ? `${data.calendar.calendar_name} connected` : "Calendar not connected"}</strong>
-            </div>
-          </Card>
-        );
-      case "recent_conversations":
-        return (
-          <Card title="Recent conversations" action={<Link className="table__link" to="conversations">View all</Link>}>
-            {data.recent_conversations.length === 0 ? (
-              <EmptyState title="No conversations yet" body="SMS intake conversations will appear here." />
-            ) : (
-              <div className="overview-list">
-                {data.recent_conversations.slice(0, 3).map((conversation) => (
-                  <Link className="overview-list__item" to="conversations" key={conversation.id}>
-                    <span className="conversation-avatar" aria-hidden="true">{(conversation.customer_name || conversation.phone).slice(0, 2).toUpperCase()}</span>
-                    <span className="overview-list__copy"><strong>{conversation.customer_name || conversation.phone}</strong><small>{conversation.last_message || "No stored message"}</small></span>
-                    <span className="conversation-time">{formatDate(conversation.updated_at)}</span>
-                  </Link>
-                ))}
-              </div>
-            )}
-          </Card>
-        );
-    }
-  };
-
-  const servicesOnLeft = layout.services_position === "left";
-  const servicesOnTop = layout.services_position === "top";
-  const servicesBeforeMain = servicesOnLeft || servicesOnTop;
-  const services = data && widgetVisible("services") && summaryModules.length > 0 ? (
-    <aside className="overview-services overview-dashboard__services" aria-labelledby="your-services">
-      <div className="overview-section-heading">
-        <div><h2 id="your-services">Your services</h2><p>Only the modules enabled for this business appear here.</p></div>
-        {editingLayout && (
-          <select
-            className="input overview-services__position"
-            aria-label="Services position"
-            value={layout.services_position}
-            disabled={savingLayout}
-            onChange={(event) => setServicesPosition(event.target.value as ServicesPosition)}
-          >
-            <option value="top">Top</option>
-            <option value="right">Right side</option>
-            <option value="bottom">Bottom</option>
-            <option value="left">Left side</option>
-          </select>
-        )}
-      </div>
-      <div className="overview-module-grid overview-module-grid--rail">
-        {summaryModules.map((module) => <OverviewModuleCard key={module.key} module={module} data={data} />)}
-      </div>
-    </aside>
-  ) : null;
+  const showIntakeStats = ["leads", "conversations", "appointments", "ai_intake"].some((key) => enabledKeys.has(key));
 
   return (
     <>
       <h1 className="page-title" tabIndex={-1} ref={heading}>
         Overview
       </h1>
-      <p className="page-subtitle">Your intake assistant at a glance.</p>
+      <p className="page-subtitle">Your enabled business services at a glance.</p>
 
       {loading && <Loading rows={3} />}
       {error && <ErrorState body={error} />}
       {data && (
-        <div className={`overview-dashboard${services ? "" : " overview-dashboard--no-services"}${servicesOnLeft ? " overview-dashboard--services-left" : ""}${servicesOnTop ? " overview-dashboard--services-top" : ""}${layout.services_position === "bottom" ? " overview-dashboard--services-bottom" : ""}`}>
-          {servicesBeforeMain && services}
-          <main className="overview-dashboard__main">
-            <section className="overview-live-feed" aria-labelledby="live-business-feed">
-              <div className="overview-section-heading">
-                <div>
-                  <h2 id="live-business-feed">Live business feed</h2>
-                  <p>{editingLayout ? "Drag cards by the dotted handle. Drag a card’s lower-right corner to snap it between half and full width, then save." : "Recent leads, conversations, and appointment requests."}</p>
-                </div>
-                {!readOnly && (
-                  <div className="overview-layout-actions">
-                    {editingLayout ? (
-                      <>
-                        <button className="btn" type="button" onClick={cancelLayoutEdit} disabled={savingLayout}>Cancel</button>
-                        <button className="btn btn--primary" type="button" onClick={() => void saveLayout()} disabled={savingLayout}>
-                          {savingLayout ? "Saving..." : "Save layout"}
-                        </button>
-                      </>
-                    ) : (
-                      <button className="btn" type="button" onClick={beginLayoutEdit}>Customize layout</button>
-                    )}
-                  </div>
-                )}
-              </div>
-              {layoutError && <p className="field__error overview-layout-feedback" role="alert">{layoutError}</p>}
-              {layoutStatus && <p className="calendar-success overview-layout-feedback" role="status">{layoutStatus}</p>}
-              {mainWidgets.length > 0 ? (
-                <div className="overview-widget-grid">
-                  {mainWidgets.map((widget) => {
-                    const widgetMeta = MAIN_OVERVIEW_WIDGETS.find((item) => item.key === widget);
-                    const isDragging = draggingWidget === widget;
-                    const isDropTarget = dropTarget === widget && draggingWidget !== widget;
-                    return (
-                      <div
-                        className={`overview-widget overview-widget--${widget} overview-widget--size-${layout.sizes[widget]}${editingLayout ? " overview-widget--editing" : ""}${isDragging ? " overview-widget--dragging" : ""}${isDropTarget ? " overview-widget--drop-target" : ""}${resizingWidget === widget ? " overview-widget--resizing" : ""}`}
-                        key={widget}
-                        onDragOver={(event) => {
-                          if (!editingLayout || !draggingWidget || draggingWidget === widget) return;
-                          event.preventDefault();
-                          event.dataTransfer.dropEffect = "move";
-                        }}
-                        onDragEnter={() => {
-                          if (editingLayout && draggingWidget && draggingWidget !== widget) setDropTarget(widget);
-                        }}
-                        onDrop={(event) => {
-                          if (!editingLayout || !draggingWidget) return;
-                          event.preventDefault();
-                          moveDraftWidget(draggingWidget, widget);
-                          setDraggingWidget(null);
-                          setDropTarget(null);
-                        }}
-                      >
-                        {editingLayout && widgetMeta && (
-                          <button
-                            className="overview-widget__drag-handle"
-                            type="button"
-                            draggable={!savingLayout}
-                            aria-label={`Drag ${widgetMeta.label} to reposition`}
-                            title={`Drag ${widgetMeta.label} to reposition`}
-                            onDragStart={(event) => {
-                              event.dataTransfer.effectAllowed = "move";
-                              event.dataTransfer.setData("text/plain", widget);
-                              setDraggingWidget(widget);
-                              setDropTarget(null);
-                            }}
-                            onDragEnd={() => {
-                              setDraggingWidget(null);
-                              setDropTarget(null);
-                            }}
-                          >
-                            <span aria-hidden="true">⠿</span>
-                            <span>Move {widgetMeta.label}</span>
-                          </button>
-                        )}
-                        {editingLayout && widgetMeta && (
-                          <button
-                            className="overview-widget__resize-handle"
-                            type="button"
-                            aria-label={`Resize ${widgetMeta.label}`}
-                            title="Drag left for half width or right for full width"
-                            onPointerDown={(event) => beginResize(event, widget)}
-                            onPointerMove={(event) => updateResize(event, widget)}
-                            onPointerUp={finishResize}
-                            onPointerCancel={finishResize}
-                          >
-                            <span aria-hidden="true">◢</span>
-                          </button>
-                        )}
-                        {renderMainWidget(widget)}
-                      </div>
-                    );
-                  })}
-                </div>
+        <>
+          <div className="overview-module-grid">
+            {summaryModules.map((module) => <OverviewModuleCard key={module.key} module={module} data={data} />)}
+          </div>
+
+          {showIntakeStats && <div className="stat-grid">
+            {enabledKeys.has("leads") && <Stat label="New leads" value={data.metrics.new_leads} icon="◆" />}
+            {enabledKeys.has("conversations") && <Stat label="Open conversations" value={data.metrics.open_conversations} icon="◉" />}
+            {enabledKeys.has("appointments") && <Stat label="Pending approval" value={data.metrics.pending_approval} icon="◷" />}
+            {enabledKeys.has("ai_intake") && <Stat label="Missed calls handled" value={data.metrics.missed_calls_handled} icon="✆" />}
+          </div>}
+
+          {(enabledKeys.has("leads") || enabledKeys.has("appointments")) && <div className="overview-live-grid">
+            {enabledKeys.has("leads") &&
+            <Card title="Recent leads" action={<Link className="table__link" to="leads">View all</Link>}>
+              {data.recent_leads.length === 0 ? (
+                <EmptyState title="No leads yet" body="Captured leads will appear here." />
               ) : (
-                <Card><EmptyState title="No Overview widgets are showing" body="Open Settings to choose the widgets this business wants to see." /></Card>
+                <div className="overview-list">
+                  {data.recent_leads.map((lead) => (
+                    <Link className="overview-list__item" to="leads" key={lead.id}>
+                      <span>
+                        <strong>{lead.customer_name || lead.phone}</strong>
+                        <small>{lead.service_request || lead.business_summary || "No service summary"}</small>
+                      </span>
+                      <Badge tone={leadTone(lead.workflow_status)}>{LEAD_STATUS_LABELS[lead.workflow_status]}</Badge>
+                    </Link>
+                  ))}
+                </div>
               )}
-            </section>
-          </main>
-          {!servicesBeforeMain && services}
-        </div>
+            </Card>}
+
+            {enabledKeys.has("appointments") &&
+            <Card title="Appointment requests" action={<Link className="table__link" to="appointments">View all</Link>}>
+              {data.appointment_requests.length === 0 ? (
+                <EmptyState title="No pending requests" body="New scheduling preferences will appear here." />
+              ) : (
+                <div className="overview-appointments">
+                  {data.appointment_requests.map((appointment) => (
+                    <Link className="overview-appointment" to="appointments" key={appointment.id}>
+                      <span className="overview-appointment__date" aria-hidden="true">▣</span>
+                      <span><strong>{appointment.customer_name || appointment.customer_phone}</strong><small>{appointment.service_request || "Service appointment"}</small><small>{appointment.requested_time_text || "Time not provided"}</small></span>
+                      <span className="btn btn--primary">Review & schedule</span>
+                    </Link>
+                  ))}
+                </div>
+              )}
+              <div className={data.calendar.connected ? "calendar-banner calendar-banner--ok calendar-banner--compact" : "calendar-banner calendar-banner--warn calendar-banner--compact"}>
+                <span>{data.calendar.connected ? "✓" : "!"}</span>
+                <strong>{data.calendar.connected ? `${data.calendar.calendar_name} connected` : "Calendar not connected"}</strong>
+              </div>
+            </Card>}
+          </div>}
+
+          {(enabledKeys.has("conversations") || enabledKeys.has("analytics")) && <div className="overview-live-grid overview-live-grid--activity">
+            {enabledKeys.has("conversations") &&
+            <Card title="Recent conversations" action={<Link className="table__link" to="conversations">View all</Link>}>
+              {data.recent_conversations.length === 0 ? (
+                <EmptyState title="No conversations yet" body="SMS intake conversations will appear here." />
+              ) : (
+                <div className="overview-list">
+                  {data.recent_conversations.map((conversation) => (
+                    <Link className="overview-list__item" to="conversations" key={conversation.id}>
+                      <span><strong>{conversation.customer_name || conversation.phone}</strong><small>{conversation.last_message || "No stored message"}</small></span>
+                      <Badge tone={conversation.state === "completed" ? "ok" : "demo"}>{conversation.state === "completed" ? "Completed" : "Active"}</Badge>
+                    </Link>
+                  ))}
+                </div>
+              )}
+            </Card>}
+            {enabledKeys.has("analytics") &&
+            <Card title="Lead activity · last 7 days">
+              <div className="activity-chart" role="img" aria-label="New leads per day for the last seven days">
+                {data.lead_activity.map((item) => (
+                  <div className="activity-chart__day" key={item.date}>
+                    <span className="activity-chart__count">{item.count}</span>
+                    <div className="activity-chart__track">
+                      <span style={{ height: `${Math.max(4, (item.count / maxActivity) * 100)}%` }} />
+                    </div>
+                    <small>{new Date(`${item.date}T12:00:00`).toLocaleDateString(undefined, { weekday: "short" })}</small>
+                  </div>
+                ))}
+              </div>
+            </Card>}
+
+          </div>}
+          {(enabledKeys.has("leads") || enabledKeys.has("analytics")) && <Card title="Lead sources">
+            {data.lead_sources.length === 0 ? <EmptyState title="No source data" body="Lead attribution will appear as intake records are captured." /> : <div className="source-list">{data.lead_sources.map((item) => <div key={item.source}><span>{item.source.replace(/_/g, " ")}</span><strong>{item.count}</strong></div>)}</div>}
+          </Card>}
+        </>
       )}
     </>
   );
@@ -823,12 +545,8 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
   const [calendarId, setCalendarId] = useState("");
   const [timezone, setTimezone] = useState("America/Chicago");
   const [duration, setDuration] = useState(60);
-  const [overviewLayout, setOverviewLayout] = useState<OverviewLayout>(defaultOverviewLayout);
   const [error, setError] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
-  const [layoutError, setLayoutError] = useState<string | null>(null);
-  const [layoutStatus, setLayoutStatus] = useState<string | null>(null);
-  const [savingLayout, setSavingLayout] = useState(false);
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [calendarStatus, setCalendarStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -836,7 +554,7 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const payload = await api.get<{ business: Business; calendar: CalendarConnection; dashboard_layout: DashboardLayout }>(
+      const payload = await api.get<{ business: Business; calendar: CalendarConnection }>(
         `/api/dashboard/businesses/${businessId}/settings`,
       );
       setBusiness(payload.business);
@@ -845,7 +563,6 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
       setCalendarId(payload.calendar.calendar_id);
       setTimezone(payload.calendar.timezone);
       setDuration(payload.calendar.default_duration_minutes);
-      setOverviewLayout(payload.dashboard_layout.overview);
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load settings.");
@@ -869,34 +586,6 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
       setError(err instanceof Error ? err.message : "Could not save.");
     }
   };
-
-  const updateOverviewVisibility = (key: OverviewWidgetKey, visible: boolean) => {
-    setOverviewLayout((current) => ({
-      ...current,
-      visible: { ...current.visible, [key]: visible },
-    }));
-  };
-
-  const saveOverviewLayout = async (event: React.FormEvent) => {
-    event.preventDefault();
-    setLayoutError(null);
-    setLayoutStatus(null);
-    setSavingLayout(true);
-    try {
-      const payload = await api.patch<{ dashboard_layout: DashboardLayout }>(
-        `/api/dashboard/businesses/${businessId}/settings`,
-        { dashboard_layout: { overview: overviewLayout } },
-      );
-      setOverviewLayout(payload.dashboard_layout.overview);
-      setLayoutStatus("Overview layout saved for everyone at this business.");
-    } catch (err) {
-      setLayoutError(err instanceof Error ? err.message : "Could not save the Overview layout.");
-    } finally {
-      setSavingLayout(false);
-    }
-  };
-
-  const availableOverviewWidgets = new Set(overviewLayout.available_widgets);
 
   const connectCalendar = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -971,70 +660,6 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
       </Card>
 
       <div className="settings-section">
-        <Card
-          title="Dashboard layout"
-          action={<Link className="table__link" to={`/b/${businessId}`}>Preview Overview</Link>}
-        >
-          <p className="settings-card-copy">Choose what appears on this business’s Overview. Rearrange the actual widgets directly on the Overview page with Customize layout. These changes are shared with everyone who can access this business—not saved only on one person’s computer.</p>
-          <form onSubmit={saveOverviewLayout} noValidate>
-            <div className="dashboard-layout-list" aria-label="Overview widgets">
-              {overviewLayout.order.filter((key) => availableOverviewWidgets.has(key)).map((key) => {
-                const widget = MAIN_OVERVIEW_WIDGETS.find((item) => item.key === key);
-                if (!widget || !availableOverviewWidgets.has(key)) return null;
-                return (
-                  <div className="dashboard-layout-row" key={key}>
-                    <label className="dashboard-layout-row__toggle">
-                      <input
-                        type="checkbox"
-                        checked={overviewLayout.visible[key]}
-                        disabled={readOnly || savingLayout}
-                        onChange={(event) => updateOverviewVisibility(key, event.target.checked)}
-                      />
-                      <span><strong>{widget.label}</strong><small>{widget.description}</small></span>
-                    </label>
-                  </div>
-                );
-              })}
-              {availableOverviewWidgets.has("services") && (
-                <div className="dashboard-layout-row dashboard-layout-row--services">
-                  <label className="dashboard-layout-row__toggle">
-                    <input
-                      type="checkbox"
-                      checked={overviewLayout.visible.services}
-                      disabled={readOnly || savingLayout}
-                      onChange={(event) => updateOverviewVisibility("services", event.target.checked)}
-                    />
-                    <span><strong>Your services rail</strong><small>Enabled services and their current status.</small></span>
-                  </label>
-                  <select
-                    className="input dashboard-layout-row__select"
-                    aria-label="Services rail position"
-                    value={overviewLayout.services_position}
-                    disabled={readOnly || savingLayout || !overviewLayout.visible.services}
-                    onChange={(event) => setOverviewLayout((current) => ({ ...current, services_position: event.target.value as ServicesPosition }))}
-                  >
-                    <option value="top">Top</option>
-                    <option value="right">Right side</option>
-                    <option value="bottom">Bottom</option>
-                    <option value="left">Left side</option>
-                  </select>
-                </div>
-              )}
-            </div>
-            {readOnly && <p className="read-only-note">Your role has read-only access. Ask a business owner to change the dashboard layout.</p>}
-            {layoutError && <p className="field__error" role="alert">{layoutError}</p>}
-            {layoutStatus && <p className="calendar-success" role="status">{layoutStatus}</p>}
-            <div className="dashboard-layout-footer">
-              <button className="btn" type="button" disabled={readOnly || savingLayout} onClick={() => { setOverviewLayout(defaultOverviewLayout()); setLayoutStatus(null); setLayoutError(null); }}>
-                Restore default
-              </button>
-              <button className="btn btn--primary" type="submit" disabled={readOnly || savingLayout}>
-                {savingLayout ? "Saving layout..." : "Save Overview layout"}
-              </button>
-            </div>
-          </form>
-        </Card>
-
         <Card title="Google Calendar">
           <div className={calendar?.connected ? "calendar-banner calendar-banner--ok" : "calendar-banner calendar-banner--warn"}>
             <span>{calendar?.connected ? "✓" : "!"}</span>
@@ -1081,7 +706,7 @@ export function ClientDashboardRoutes({
 
   return (
     <Routes>
-      <Route index element={<Overview businessId={businessId} modules={modules} readOnly={readOnly} />} />
+      <Route index element={<Overview businessId={businessId} modules={modules} />} />
       <Route path="leads" element={<Leads businessId={businessId} readOnly={readOnly} />} />
       <Route path="conversations" element={<Conversations businessId={businessId} />} />
       <Route path="appointments" element={<Appointments businessId={businessId} readOnly={readOnly} />} />

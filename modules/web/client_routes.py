@@ -11,10 +11,23 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import Integer, String, cast, func, or_, select
 
-from modules import calendar_service, dashboard_layout, entitlements, google_visibility, website_monitoring
+from modules import (
+    calendar_service,
+    entitlements,
+    google_visibility,
+    module_configuration,
+    outbound_sms,
+    website_monitoring,
+)
 from modules.auth.decorators import require_business_access, require_module
-from modules.models import AppointmentRequest, Business, ConversationSession, Lead, MissedCallEvent
-from modules.demo_workspace import DEMO_BUSINESS_ID
+from modules.models import (
+    AppointmentRequest,
+    Business,
+    BusinessPhoneNumber,
+    ConversationSession,
+    Lead,
+    MissedCallEvent,
+)
 from modules.serializers import (
     appointment_dto,
     business_dto,
@@ -32,6 +45,87 @@ LEAD_WORKFLOW_STATUSES = {"new", "qualified", "needs_review", "scheduled", "clos
 CONVERSATION_STATES = {"awaiting_profile_selection", "in_progress", "completed", "terminated"}
 APPOINTMENT_STATUSES = {"pending", "scheduled", "declined", "cancelled", "sync_failed"}
 MAX_PAGE_SIZE = 100
+
+
+def _module_configuration_payload(business_id: str, module_key: str):
+    configuration, version = module_configuration.get_configuration(
+        g.db, business_id, module_key
+    )
+    return {
+        "module_key": module_key,
+        "schema_version": module_configuration.SCHEMA_VERSION,
+        "version": version,
+        "configuration": configuration,
+    }
+
+
+def _save_module_configuration(business_id: str, module_key: str):
+    payload = request.get_json(silent=True) or {}
+    configuration = payload.get("configuration")
+    if configuration is None:
+        return jsonify({"error": "configuration is required."}), 400
+    expected_version = payload.get("expected_version")
+    if expected_version is not None:
+        try:
+            expected_version = int(expected_version)
+        except (TypeError, ValueError):
+            return jsonify({"error": "expected_version must be a whole number."}), 400
+    try:
+        row = module_configuration.save_configuration(
+            g.db,
+            business_id,
+            module_key,
+            configuration,
+            expected_version=expected_version,
+        )
+    except module_configuration.ConfigurationValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except module_configuration.ConfigurationConflictError as exc:
+        return jsonify({"error": str(exc), "code": "configuration_conflict"}), 409
+
+    record_audit_event(
+        g.db,
+        action="business.module_configuration.update",
+        target_type="business_module_configuration",
+        target_id=module_key,
+        business_id=business_id,
+        actor_user_id=g.current_user.id,
+        details={
+            "module": module_key,
+            "version": row.version,
+            "configuration_keys": sorted(row.configuration.keys()),
+        },
+    )
+    g.db.commit()
+    return jsonify(_module_configuration_payload(business_id, module_key)), 200
+
+
+@client_bp.get("/businesses/<business_id>/ai-memory/configuration")
+@require_business_access()
+@require_module("ai_memory")
+def ai_memory_configuration(business_id: str):
+    return jsonify(_module_configuration_payload(business_id, "ai_memory")), 200
+
+
+@client_bp.put("/businesses/<business_id>/ai-memory/configuration")
+@require_business_access(write=True)
+@require_module("ai_memory")
+def update_ai_memory_configuration(business_id: str):
+    return _save_module_configuration(business_id, "ai_memory")
+
+
+@client_bp.get("/businesses/<business_id>/ai-scheduling/configuration")
+@require_business_access()
+@require_module("ai_scheduling")
+def ai_scheduling_configuration(business_id: str):
+    return jsonify(_module_configuration_payload(business_id, "ai_scheduling")), 200
+
+
+@client_bp.put("/businesses/<business_id>/ai-scheduling/configuration")
+@require_business_access(write=True)
+@require_module("ai_scheduling")
+def update_ai_scheduling_configuration(business_id: str):
+    return _save_module_configuration(business_id, "ai_scheduling")
 
 
 def _page_args() -> tuple[int, int]:
@@ -65,16 +159,6 @@ def _website_health_payload(business: Business) -> dict:
     """Resolve one business's configured monitor without exposing provider credentials."""
     config = (business.settings or {}).get("website") or {}
     website_url = config.get("url") or ""
-    if business.id == DEMO_BUSINESS_ID:
-        return {
-            "website_url": website_url,
-            "provider": {"name": "UptimeRobot", "status": "connected"},
-            "monitor": {
-                "id": "demo-monitor", "name": "Northstar Auto Care demo website", "url": website_url,
-                "status": "up", "uptime_7d": "100.00", "uptime_30d": "99.98",
-                "uptime_90d": "99.96", "average_response_ms": 214,
-            },
-        }
     if not website_monitoring.is_configured():
         return {
             "website_url": website_url,
@@ -112,8 +196,6 @@ def website_health(business_id: str):
 @require_module("local_seo")
 def local_seo(business_id: str):
     business = g.db.get(Business, business_id)
-    if business_id == DEMO_BUSINESS_ID:
-        return jsonify({"status": "connected", "property": "sc-domain:northstar-demo.example", "data": {"period": {"start": "2026-09-26", "end": "2026-10-26"}, "clicks": 186, "impressions": 5420, "ctr": 0.0343, "position": 8.2, "queries": [{"query": "auto repair near me", "clicks": 58, "impressions": 1320}, {"query": "brake repair denton", "clicks": 34, "impressions": 710}, {"query": "ac repair for cars", "clicks": 29, "impressions": 604}]}}), 200
     property_url = ((business.settings or {}).get("google_visibility") or {}).get("search_property") or ""
     if not property_url or not os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip():
         return jsonify({"status": "not_connected", "property": property_url, "data": None}), 200
@@ -130,8 +212,6 @@ def local_seo(business_id: str):
 @require_module("reviews")
 def business_reviews(business_id: str):
     business = g.db.get(Business, business_id)
-    if business_id == DEMO_BUSINESS_ID:
-        return jsonify({"status": "connected", "profile_url": "https://example.com", "data": {"average_rating": 4.8, "total_reviews": 127, "recent": [{"id": "demo-review-1", "author": "Taylor R.", "rating": "five_star", "comment": "Friendly service and clear updates from start to finish.", "updated_at": "2026-10-22T00:00:00+00:00", "reply": "Thank you for the feedback!"}, {"id": "demo-review-2", "author": "Chris M.", "rating": "five_star", "comment": "Easy scheduling and the repair was explained clearly.", "updated_at": "2026-10-18T00:00:00+00:00", "reply": "We appreciate your visit."}]}}), 200
     config = (business.settings or {}).get("google_visibility") or {}
     location = config.get("profile_location") or ""
     profile_url = config.get("profile_url") or ""
@@ -228,7 +308,6 @@ def overview(business_id: str):
     return jsonify(
         {
             "enabled_modules": navigation_modules,
-            "dashboard_layout": dashboard_layout.for_business(business, enabled),
             "metrics": {
                 "total_leads": lead_count,
                 "new_leads": open_leads,
@@ -525,6 +604,68 @@ def update_appointment(business_id: str, appointment_id: int):
         details={"calendar_event_id": result.event_id, "duration_minutes": duration},
     )
     g.db.commit()
+
+    # Approval notifications belong to the paid AI Scheduling module. They are
+    # sent only after both the provider event and local scheduled state exist,
+    # so a customer can never receive a false confirmation after a sync error.
+    if (
+        entitlements.is_module_enabled(g.db, business_id, "ai_scheduling")
+        and not appointment.approval_message_sid
+    ):
+        scheduling_config, _ = module_configuration.get_configuration(
+            g.db, business_id, "ai_scheduling"
+        )
+        if scheduling_config["approval_notification_enabled"]:
+            sender = g.db.execute(
+                select(BusinessPhoneNumber).where(
+                    BusinessPhoneNumber.business_id == business_id,
+                    BusinessPhoneNumber.enabled.is_(True),
+                ).order_by(BusinessPhoneNumber.id.asc())
+            ).scalars().first()
+            if sender is None:
+                appointment.approval_message_error = "No enabled business SMS number is configured."
+            else:
+                local_start = start.astimezone(ZoneInfo(connection["timezone"]))
+                body = scheduling_config["approval_message_template"].format(
+                    business_name=business.name,
+                    customer_name=appointment.customer_name or "there",
+                    date=local_start.strftime("%A, %B %-d"),
+                    time=local_start.strftime("%-I:%M %p"),
+                )
+                try:
+                    appointment.approval_message_sid = outbound_sms.send(
+                        to=appointment.customer_phone,
+                        from_phone=sender.phone,
+                        body=body,
+                    )
+                    appointment.approval_message_sent_at = datetime.now(timezone.utc)
+                    appointment.approval_message_error = None
+                    record_audit_event(
+                        g.db,
+                        action="appointment.approval_notification.sent",
+                        target_type="appointment_request",
+                        target_id=str(appointment.id),
+                        business_id=business_id,
+                        actor_user_id=g.current_user.id,
+                        details={"message_sid": appointment.approval_message_sid},
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "Appointment approval SMS failed for business=%s appointment=%s",
+                        business_id,
+                        appointment.id,
+                    )
+                    appointment.approval_message_error = str(exc)[:255]
+                    record_audit_event(
+                        g.db,
+                        action="appointment.approval_notification.failed",
+                        target_type="appointment_request",
+                        target_id=str(appointment.id),
+                        business_id=business_id,
+                        actor_user_id=g.current_user.id,
+                        details={"error": appointment.approval_message_error},
+                    )
+            g.db.commit()
     return jsonify({"appointment": appointment_dto(appointment)}), 200
 
 
@@ -891,12 +1032,10 @@ def get_settings(business_id: str):
     business = g.db.get(Business, business_id)
     if business is None:
         return jsonify({"error": "Business not found."}), 404
-    enabled = entitlements.enabled_module_keys(g.db, business_id)
     return jsonify(
         {
             "business": business_dto(business),
             "calendar": calendar_service.connection_dto(business),
-            "dashboard_layout": dashboard_layout.for_business(business, enabled),
         }
     ), 200
 
@@ -926,20 +1065,6 @@ def update_settings(business_id: str):
         business.settings = settings
         changed["business_hours"] = "updated"
 
-    layout_payload = None
-    if "dashboard_layout" in payload:
-        if not isinstance(payload["dashboard_layout"], dict):
-            return jsonify(
-                {"error": "Validation failed.", "fields": {"dashboard_layout": "Must be an object."}}
-            ), 400
-        enabled = entitlements.enabled_module_keys(g.db, business_id)
-        layout_payload = dashboard_layout.save_for_business(
-            business,
-            payload["dashboard_layout"],
-            enabled,
-        )
-        changed["dashboard_layout"] = "updated"
-
     record_audit_event(
         g.db,
         action="business.settings.update",
@@ -950,12 +1075,4 @@ def update_settings(business_id: str):
         details=changed,
     )
     g.db.commit()
-    return jsonify(
-        {
-            "business": business_dto(business),
-            "dashboard_layout": layout_payload
-            or dashboard_layout.for_business(
-                business, entitlements.enabled_module_keys(g.db, business_id)
-            ),
-        }
-    ), 200
+    return jsonify({"business": business_dto(business)}), 200
