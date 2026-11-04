@@ -3,10 +3,6 @@ import { api } from "../../lib/api";
 import { Badge, Card, EmptyState, ErrorState, Field, Loading, useFocusOnMount } from "../../components";
 
 interface ModuleConfiguration<T> { version: number; configuration: T }
-interface MemoryConfig {
-  rolling_summary_enabled: boolean; summary_max_characters: number; retention_days: number;
-  record_types: { key: string; label: string; fields: unknown[] }[]; status_pipelines: unknown[];
-}
 interface MemoryCustomer {
   id: number; phone: string; customer_name: string | null; rolling_summary: string;
   summary_source_count: number; summary_updated_at: string | null; pending_proposals: number;
@@ -14,27 +10,29 @@ interface MemoryCustomer {
 interface MemoryRecord { id: number; record_type: string; label: string; values: Record<string, unknown>; status: string | null; version: number }
 interface MemoryProposal { id: number; record_type: string; proposed_values: Record<string, unknown>; proposed_status: string | null; reason: string | null; status: string }
 interface CustomerDetail { customer: MemoryCustomer; records: MemoryRecord[]; proposals: MemoryProposal[]; context_packet: unknown }
+interface RecordType { key: string; label: string; fields: { key: string; label: string; type: string; choices: string[]; required: boolean }[] }
 
 export function AIMemory({ businessId, readOnly }: { businessId: string; readOnly: boolean }) {
   const heading = useFocusOnMount<HTMLHeadingElement>();
-  const [config, setConfig] = useState<ModuleConfiguration<MemoryConfig> | null>(null);
   const [customers, setCustomers] = useState<MemoryCustomer[]>([]);
   const [selected, setSelected] = useState<CustomerDetail | null>(null);
-  const [schemaText, setSchemaText] = useState("[]");
+  const [recordTypes, setRecordTypes] = useState<RecordType[]>([]);
+  const [recordType, setRecordType] = useState("");
+  const [recordLabel, setRecordLabel] = useState("");
+  const [recordValues, setRecordValues] = useState("{}");
   const [search, setSearch] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const [configuration, list] = await Promise.all([
-        api.get<ModuleConfiguration<MemoryConfig>>(`/api/dashboard/businesses/${businessId}/ai-memory/configuration`),
+      const [list, types] = await Promise.all([
         api.get<{ items: MemoryCustomer[] }>(`/api/dashboard/businesses/${businessId}/ai-memory/customers${search ? `?q=${encodeURIComponent(search)}` : ""}`),
+        api.get<{ items: RecordType[] }>(`/api/dashboard/businesses/${businessId}/ai-memory/record-types`),
       ]);
-      setConfig(configuration); setSchemaText(JSON.stringify(configuration.configuration.record_types, null, 2));
       setCustomers(list.items); setError(null);
+      setRecordTypes(types.items); setRecordType((current) => current || types.items[0]?.key || "");
     } catch (err) { setError(err instanceof Error ? err.message : "Could not load AI Memory."); }
     finally { setLoading(false); }
   }, [businessId, search]);
@@ -44,37 +42,24 @@ export function AIMemory({ businessId, readOnly }: { businessId: string; readOnl
     try { setSelected(await api.get<CustomerDetail>(`/api/dashboard/businesses/${businessId}/ai-memory/customers/${id}`)); }
     catch (err) { setError(err instanceof Error ? err.message : "Could not load customer memory."); }
   };
-  const saveConfig = async () => {
-    if (!config) return;
-    setSaving(true);
-    try {
-      const recordTypes = JSON.parse(schemaText);
-      const next = await api.put<ModuleConfiguration<MemoryConfig>>(`/api/dashboard/businesses/${businessId}/ai-memory/configuration`, {
-        expected_version: config.version, configuration: { ...config.configuration, record_types: recordTypes },
-      });
-      setConfig(next); setSchemaText(JSON.stringify(next.configuration.record_types, null, 2)); setError(null);
-    } catch (err) { setError(err instanceof Error ? err.message : "Could not save memory settings."); }
-    finally { setSaving(false); }
-  };
   const resolve = async (proposal: MemoryProposal, action: "approve" | "reject") => {
     if (!selected) return;
     await api.patch(`/api/dashboard/businesses/${businessId}/ai-memory/proposals/${proposal.id}`, { action });
     await openCustomer(selected.customer.id); await load();
   };
+  const addRecord = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!selected) return;
+    try {
+      await api.post(`/api/dashboard/businesses/${businessId}/ai-memory/customers/${selected.customer.id}/records`, { record_type: recordType, label: recordLabel, values: JSON.parse(recordValues) });
+      setRecordLabel(""); setRecordValues("{}"); await openCustomer(selected.customer.id); await load();
+    } catch (err) { setError(err instanceof Error ? err.message : "Could not save the customer record."); }
+  };
 
   return <>
     <h1 className="page-title" tabIndex={-1} ref={heading}>AI Memory</h1>
-    <p className="page-subtitle">Verified customer context, structured service records, and employee-approved AI suggestions.</p>
+    <p className="page-subtitle">Customer context, service history, and employee-approved AI suggestions. NTX manages the memory rules for this business.</p>
     {loading && <Loading rows={4} />}{error && <ErrorState body={error} />}
-    {config && <Card title="Memory rules">
-      <div className="inline-form-grid">
-        <Field label="Retention days" id="memory-retention"><input id="memory-retention" className="input" type="number" min="30" max="3650" disabled={readOnly} value={config.configuration.retention_days} onChange={(e) => setConfig({ ...config, configuration: { ...config.configuration, retention_days: Number(e.target.value) } })} /></Field>
-        <Field label="Summary character limit" id="memory-limit"><input id="memory-limit" className="input" type="number" min="200" max="4000" disabled={readOnly} value={config.configuration.summary_max_characters} onChange={(e) => setConfig({ ...config, configuration: { ...config.configuration, summary_max_characters: Number(e.target.value) } })} /></Field>
-      </div>
-      <Field label="Record type schema" id="memory-schema"><textarea id="memory-schema" className="input" rows={10} disabled={readOnly} value={schemaText} onChange={(e) => setSchemaText(e.target.value)} /></Field>
-      <p className="form-hint">Define industry-neutral records such as vehicle, property, pet, equipment, work order, or case. Restricted fields must remain hidden from AI.</p>
-      <button className="btn btn--primary" disabled={readOnly || saving} onClick={() => void saveConfig()}>{saving ? "Saving…" : "Save memory rules"}</button>
-    </Card>}
     <Card title="Customer memories">
       <form className="toolbar" onSubmit={(e) => { e.preventDefault(); void load(); }}><input className="input" placeholder="Search name or phone" value={search} onChange={(e) => setSearch(e.target.value)} /><button className="btn">Search</button></form>
       {!customers.length ? <EmptyState title="No customer memories yet" body="A memory is created automatically after a completed intake while this module is enabled." /> : <div className="management-list">{customers.map((customer) => <button type="button" className="management-list__item" key={customer.id} onClick={() => void openCustomer(customer.id)}><span><strong>{customer.customer_name || customer.phone}</strong><small>{customer.phone} · {customer.summary_source_count} summarized items</small></span>{customer.pending_proposals > 0 && <Badge tone="warn">{customer.pending_proposals} pending</Badge>}</button>)}</div>}
@@ -82,6 +67,12 @@ export function AIMemory({ businessId, readOnly }: { businessId: string; readOnl
     {selected && <Card title={selected.customer.customer_name || selected.customer.phone}>
       <p>{selected.customer.rolling_summary || "No rolling summary yet."}</p>
       <h3>Structured records</h3>
+      {!readOnly && (recordTypes.length ? <form className="inline-form-grid" onSubmit={addRecord}>
+        <Field label="Record type" id="memory-record-type"><select id="memory-record-type" className="input" value={recordType} onChange={(e) => setRecordType(e.target.value)}>{recordTypes.map((item) => <option key={item.key} value={item.key}>{item.label}</option>)}</select></Field>
+        <Field label="Record label" id="memory-record-label"><input id="memory-record-label" className="input" value={recordLabel} placeholder="Example: 2017 Honda Civic" onChange={(e) => setRecordLabel(e.target.value)} /></Field>
+        <Field label="Record values" id="memory-record-values"><textarea id="memory-record-values" className="input" rows={3} value={recordValues} placeholder='{"field_key":"value"}' onChange={(e) => setRecordValues(e.target.value)} /></Field>
+        <button className="btn btn--primary inline-form-grid__button">Add customer record</button>
+      </form> : <p className="form-hint">NTX has not configured custom record types for this business yet.</p>)}
       {!selected.records.length ? <p className="form-hint">No structured records yet.</p> : selected.records.map((record) => <div className="management-list__item" key={record.id}><span><strong>{record.label}</strong><small>{record.record_type}{record.status ? ` · ${record.status}` : ""}</small><code>{JSON.stringify(record.values)}</code></span></div>)}
       <h3>AI update proposals</h3>
       {!selected.proposals.filter((item) => item.status === "pending").length ? <p className="form-hint">No changes waiting for approval.</p> : selected.proposals.filter((item) => item.status === "pending").map((proposal) => <div className="management-list__item" key={proposal.id}><span><strong>{proposal.record_type}</strong><small>{proposal.reason || "Proposed from customer context"}</small><code>{JSON.stringify(proposal.proposed_values)}</code></span><span><button className="btn btn--primary" disabled={readOnly} onClick={() => void resolve(proposal, "approve")}>Approve</button><button className="btn" disabled={readOnly} onClick={() => void resolve(proposal, "reject")}>Reject</button></span></div>)}

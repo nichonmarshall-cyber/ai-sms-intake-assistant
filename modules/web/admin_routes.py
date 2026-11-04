@@ -16,6 +16,7 @@ from modules import (
     calendar_service,
     entitlements,
     google_visibility,
+    module_configuration,
     missed_call as missed_call_service,
     twilio_usage,
     website_monitoring,
@@ -431,6 +432,42 @@ def update_google_visibility(business_id: str):
                        details=clean)
     g.db.commit()
     return jsonify(clean), 200
+
+
+@admin_bp.get("/businesses/<business_id>/module-configurations/<module_key>")
+@require_platform_operator
+def admin_module_configuration(business_id: str, module_key: str):
+    if module_key not in module_configuration.CONFIGURABLE_MODULES:
+        return jsonify({"error": "This module does not support configuration."}), 404
+    if g.db.get(Business, business_id) is None:
+        return jsonify({"error": "Business not found."}), 404
+    configuration, version = module_configuration.get_configuration(g.db, business_id, module_key)
+    return jsonify({"module_key": module_key, "schema_version": module_configuration.SCHEMA_VERSION, "version": version, "configuration": configuration}), 200
+
+
+@admin_bp.put("/businesses/<business_id>/module-configurations/<module_key>")
+@require_platform_admin
+def update_admin_module_configuration(business_id: str, module_key: str):
+    if module_key not in module_configuration.CONFIGURABLE_MODULES:
+        return jsonify({"error": "This module does not support configuration."}), 404
+    if g.db.get(Business, business_id) is None:
+        return jsonify({"error": "Business not found."}), 404
+    payload = request.get_json(silent=True) or {}
+    if not isinstance(payload.get("configuration"), dict):
+        return jsonify({"error": "configuration is required."}), 400
+    try:
+        expected = payload.get("expected_version")
+        row = module_configuration.save_configuration(
+            g.db, business_id, module_key, payload["configuration"],
+            expected_version=int(expected) if expected is not None else None,
+        )
+    except (ValueError, TypeError, module_configuration.ConfigurationValidationError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    except module_configuration.ConfigurationConflictError as exc:
+        return jsonify({"error": str(exc), "code": "configuration_conflict"}), 409
+    record_audit_event(g.db, action="business.module_configuration.update", target_type="business_module_configuration", target_id=str(row.id), business_id=business_id, actor_user_id=g.current_user.id, details={"module": module_key, "version": row.version, "surface": "control_center"})
+    g.db.commit()
+    return jsonify({"module_key": module_key, "schema_version": module_configuration.SCHEMA_VERSION, "version": row.version, "configuration": row.configuration}), 200
 
 
 @admin_bp.get("/websites")

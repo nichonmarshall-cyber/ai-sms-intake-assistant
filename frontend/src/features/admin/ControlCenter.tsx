@@ -260,6 +260,17 @@ interface BusinessDetailPayload {
   google_visibility: { search_property?: string; profile_location?: string; profile_url?: string };
 }
 
+interface MemoryModuleConfiguration {
+  version: number;
+  configuration: {
+    rolling_summary_enabled: boolean;
+    summary_max_characters: number;
+    retention_days: number;
+    record_types: unknown[];
+    status_pipelines: unknown[];
+  };
+}
+
 function BusinessDetail({ readOnly }: { readOnly: boolean }) {
   const { businessId = "" } = useParams();
   const heading = useFocusOnMount<HTMLHeadingElement>();
@@ -268,6 +279,10 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
     [businessId],
   );
   const users = useResource<{ items: User[] }>("/api/admin/users");
+  const memoryRules = useResource<MemoryModuleConfiguration>(
+    `/api/admin/businesses/${businessId}/module-configurations/ai_memory`,
+    [businessId],
+  );
   const [saving, setSaving] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [phone, setPhone] = useState("");
@@ -290,6 +305,8 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
   const [profileLocation, setProfileLocation] = useState("");
   const [profileUrl, setProfileUrl] = useState("");
   const [googleErrors, setGoogleErrors] = useState<Record<string, string>>({});
+  const [memorySchema, setMemorySchema] = useState("[]");
+  const [memoryConfig, setMemoryConfig] = useState<MemoryModuleConfiguration["configuration"] | null>(null);
 
   useEffect(() => {
     if (data) {
@@ -300,6 +317,13 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
       setProfileUrl(data.google_visibility.profile_url || "");
     }
   }, [data]);
+
+  useEffect(() => {
+    if (memoryRules.data) {
+      setMemoryConfig(memoryRules.data.configuration);
+      setMemorySchema(JSON.stringify(memoryRules.data.configuration.record_types, null, 2));
+    }
+  }, [memoryRules.data]);
 
   const runAction = async (key: string, action: () => Promise<void>) => {
     setSaving(key);
@@ -453,6 +477,25 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
     }
   };
 
+  const saveMemoryRules = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!memoryRules.data || !memoryConfig) return;
+    setSaving("memory-rules");
+    setActionError(null);
+    try {
+      const record_types = JSON.parse(memorySchema);
+      await api.put(`/api/admin/businesses/${businessId}/module-configurations/ai_memory`, {
+        expected_version: memoryRules.data.version,
+        configuration: { ...memoryConfig, record_types },
+      });
+      await memoryRules.reload();
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : "Could not save AI Memory rules.");
+    } finally {
+      setSaving(null);
+    }
+  };
+
   if (loading) return <Loading rows={6} />;
   if (error) return <ErrorState body={error} />;
   if (!data) return null;
@@ -540,6 +583,21 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
           <Field label="Google listing link" id="profile-url" error={googleErrors.profile_url}><input id="profile-url" className="input" value={profileUrl} placeholder="https://maps.google.com/..." disabled={readOnly} onChange={(event) => setProfileUrl(event.target.value)} /></Field>
           <button className="btn btn--primary inline-form-grid__button" disabled={readOnly || saving === "google"}>Save Google settings</button>
         </form>
+      </Card>
+
+      <Card title="AI Memory rules">
+        <p className="management-copy">This is the tenant-level schema the AI follows. Define what this business is allowed to remember; client users can work with customer records but cannot change these guardrails.</p>
+        {memoryRules.loading && <Loading rows={2} />}
+        {memoryRules.error && <ErrorState body={memoryRules.error} />}
+        {memoryRules.data && memoryConfig && <form onSubmit={saveMemoryRules} noValidate>
+          <div className="inline-form-grid">
+            <Field label="Retention days" id="admin-memory-retention"><input id="admin-memory-retention" className="input" type="number" min="30" max="3650" disabled={readOnly} value={memoryConfig.retention_days} onChange={(event) => setMemoryConfig({ ...memoryConfig, retention_days: Number(event.target.value) })} /></Field>
+            <Field label="Summary character limit" id="admin-memory-summary"><input id="admin-memory-summary" className="input" type="number" min="200" max="4000" disabled={readOnly} value={memoryConfig.summary_max_characters} onChange={(event) => setMemoryConfig({ ...memoryConfig, summary_max_characters: Number(event.target.value) })} /></Field>
+          </div>
+          <Field label="Record type schema" id="admin-memory-schema"><textarea id="admin-memory-schema" className="input" rows={10} disabled={readOnly} value={memorySchema} onChange={(event) => setMemorySchema(event.target.value)} /></Field>
+          <p className="form-hint">Use reusable record types such as vehicle, pet, property, equipment, work order, or case. Restricted fields are never sent to AI.</p>
+          <button className="btn btn--primary" disabled={readOnly || saving === "memory-rules"}>{saving === "memory-rules" ? "Saving…" : "Save AI Memory rules"}</button>
+        </form>}
       </Card>
 
       <Card title="Module entitlements">

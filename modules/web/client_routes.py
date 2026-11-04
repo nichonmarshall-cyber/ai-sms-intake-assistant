@@ -153,6 +153,19 @@ def memory_customers(business_id: str):
     return jsonify({"items": [customer_memory.customer_dto(row, pending_proposals=pending.get(row.id, 0)) for row in rows]}), 200
 
 
+@client_bp.get("/businesses/<business_id>/ai-memory/record-types")
+@require_business_access()
+@require_module("ai_memory")
+def memory_record_types(business_id: str):
+    configuration, _ = module_configuration.get_configuration(g.db, business_id, "ai_memory")
+    # Client users need labels and input types to maintain customer records,
+    # but never receive model visibility, authority, or sensitivity controls.
+    return jsonify({"items": [{
+        "key": item["key"], "label": item["label"],
+        "fields": [{"key": field["key"], "label": field["label"], "type": field["type"], "choices": field["choices"], "required": field["required"]} for field in item["fields"]],
+    } for item in configuration["record_types"]]}), 200
+
+
 @client_bp.post("/businesses/<business_id>/ai-memory/customers")
 @require_business_access(write=True)
 @require_module("ai_memory")
