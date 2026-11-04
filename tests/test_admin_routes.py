@@ -97,7 +97,7 @@ def test_business_detail_includes_modules_and_counts(demo_app):
 
     body = client.get(f"/api/admin/businesses/{business.id}").get_json()
     assert body["business"]["id"] == business.id
-    assert len(body["modules"]) == 14
+    assert len(body["modules"]) == 16
     assert body["counts"]["leads"] == 0
 
 

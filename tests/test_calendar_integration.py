@@ -3,11 +3,18 @@ from unittest.mock import patch
 
 from sqlalchemy import select
 
-from modules import calendar_service
+from modules import calendar_service, entitlements
 from modules.calendar_service import CalendarEventResult
 from modules.conversation_store import record_lead
 from modules.db import session_scope
-from modules.models import AppointmentRequest, AuditEvent, Business, ConversationSession, Lead
+from modules.models import (
+    AppointmentRequest,
+    AuditEvent,
+    Business,
+    BusinessPhoneNumber,
+    ConversationSession,
+    Lead,
+)
 from tests.conftest import auth_headers, login, make_business, make_membership, make_platform_user
 
 PASSWORD = "correct-horse-battery-staple"
@@ -216,6 +223,101 @@ def test_provider_failure_remains_visible_and_does_not_mark_scheduled(demo_app):
     assert response.status_code == 502
     assert response.get_json()["appointment"]["status"] == "sync_failed"
     assert response.get_json()["appointment"]["calendar_event_id"] is None
+
+
+def test_successful_approval_sends_configured_customer_message(demo_app):
+    business = make_business()
+    _owner(business)
+    appointment = _appointment(business.id)
+    db = session_scope()
+    try:
+        stored = db.get(Business, business.id)
+        stored.settings = {
+            "calendar": {
+                "calendar_id": "miller@example.test",
+                "calendar_name": "Miller Service",
+                "timezone": "America/Chicago",
+                "verified_at": datetime.now(timezone.utc).isoformat(),
+                "default_duration_minutes": 60,
+            }
+        }
+        db.add(BusinessPhoneNumber(
+            business_id=business.id,
+            phone="+18175550100",
+            label="Front desk",
+            enabled=True,
+            settings={},
+        ))
+        entitlements.set_module(db, business.id, "ai_scheduling", True)
+        db.commit()
+    finally:
+        db.close()
+    client, csrf, _ = login(demo_app, "calendar-owner@test.local", PASSWORD)
+
+    with (
+        patch(
+            "modules.calendar_service.create_event",
+            return_value=CalendarEventResult(
+                "google-event-notify", "https://calendar.google.test/event"
+            ),
+        ),
+        patch("modules.outbound_sms.send", return_value="SMapproval123") as send_mock,
+    ):
+        response = client.patch(
+            f"/api/dashboard/businesses/{business.id}/appointments/{appointment.id}",
+            json={"action": "schedule", "scheduled_start": "2030-05-16T09:00"},
+            headers=auth_headers(csrf),
+        )
+
+    assert response.status_code == 200
+    notification = response.get_json()["appointment"]["approval_notification"]
+    assert notification["sent"] is True
+    assert notification["message_sid"] == "SMapproval123"
+    call = send_mock.call_args.kwargs
+    assert call["to"] == appointment.customer_phone
+    assert call["from_phone"] == "+18175550100"
+    assert "approved" in call["body"].lower()
+    assert "Thursday, May 16" in call["body"]
+    assert "9:00 AM" in call["body"]
+
+
+def test_calendar_failure_never_sends_approval_message(demo_app):
+    business = make_business()
+    _owner(business)
+    appointment = _appointment(business.id)
+    db = session_scope()
+    try:
+        stored = db.get(Business, business.id)
+        stored.settings = {
+            "calendar": {
+                "calendar_id": "miller@example.test",
+                "calendar_name": "Miller Service",
+                "timezone": "America/Chicago",
+                "verified_at": datetime.now(timezone.utc).isoformat(),
+                "default_duration_minutes": 60,
+            }
+        }
+        entitlements.set_module(db, business.id, "ai_scheduling", True)
+        db.commit()
+    finally:
+        db.close()
+    client, csrf, _ = login(demo_app, "calendar-owner@test.local", PASSWORD)
+
+    with (
+        patch(
+            "modules.calendar_service.create_event",
+            side_effect=calendar_service.CalendarProviderError("Provider unavailable"),
+        ),
+        patch("modules.outbound_sms.send") as send_mock,
+    ):
+        response = client.patch(
+            f"/api/dashboard/businesses/{business.id}/appointments/{appointment.id}",
+            json={"action": "schedule", "scheduled_start": "2030-05-16T09:00"},
+            headers=auth_headers(csrf),
+        )
+
+    assert response.status_code == 502
+    send_mock.assert_not_called()
 
 
 def test_viewer_cannot_schedule_appointments(demo_app):

@@ -75,6 +75,29 @@ DEFAULT_BUSINESS_SETTINGS = {
         "verified_at": None,
         "default_duration_minutes": 60,
     },
+    "ai_memory": {
+        "rolling_summary_enabled": True,
+        "summary_max_characters": 1200,
+        "retention_days": 365,
+        "record_types": [],
+        "status_pipelines": [],
+    },
+    "ai_scheduling": {
+        "booking_mode": "approval_required",
+        "approval_notification_enabled": True,
+        "approval_message_template": (
+            "Your appointment request has been approved for {date} at {time}. "
+            "The {business_name} team will contact you shortly to confirm any remaining details. "
+            "Reply here if anything changes."
+        ),
+        "buffer_before_minutes": 0,
+        "buffer_after_minutes": 15,
+        "minimum_notice_minutes": 120,
+        "maximum_advance_days": 60,
+        "slot_interval_minutes": 15,
+        "max_bookings_per_day": None,
+        "services": [],
+    },
 }
 
 

@@ -125,6 +125,8 @@ function iconFor(key: string): string {
     conversations: "◍",
     appointments: "▣",
     ai_intake: "◉",
+    ai_memory: "◫",
+    ai_scheduling: "◷",
     website: "◇",
     local_seo: "◎",
     reviews: "★",

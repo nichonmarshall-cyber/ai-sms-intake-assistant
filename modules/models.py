@@ -187,6 +187,11 @@ class AppointmentRequest(Base):
     calendar_event_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     calendar_event_link: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     provider_error: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    approval_message_sid: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    approval_message_sent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    approval_message_error: Mapped[str | None] = mapped_column(String(255), nullable=True)
     scheduled_by_user_id: Mapped[str | None] = mapped_column(
         ForeignKey("platform_users.id", ondelete="SET NULL"), nullable=True
     )
@@ -391,6 +396,32 @@ class BusinessModule(Base):
     )
     module_key: Mapped[str] = mapped_column(String(48), nullable=False)
     enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
+class BusinessModuleConfiguration(Base):
+    """Versioned, tenant-scoped configuration for paid business modules."""
+
+    __tablename__ = "business_module_configurations"
+    __table_args__ = (
+        UniqueConstraint(
+            "business_id",
+            "module_key",
+            name="uq_business_module_configurations_business_key",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    business_id: Mapped[str] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    module_key: Mapped[str] = mapped_column(String(48), nullable=False)
+    configuration: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    schema_version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False

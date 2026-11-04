@@ -114,6 +114,12 @@ export interface AppointmentRequest {
   calendar_event_id: string | null;
   calendar_event_link: string | null;
   provider_error: string | null;
+  approval_notification: {
+    sent: boolean;
+    message_sid: string | null;
+    sent_at: string | null;
+    error: string | null;
+  };
   created_at: string | null;
   updated_at: string | null;
 }

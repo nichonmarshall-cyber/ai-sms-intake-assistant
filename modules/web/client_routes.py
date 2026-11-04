@@ -11,9 +11,23 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from flask import Blueprint, g, jsonify, request
 from sqlalchemy import Integer, String, cast, func, or_, select
 
-from modules import calendar_service, entitlements, google_visibility, website_monitoring
+from modules import (
+    calendar_service,
+    entitlements,
+    google_visibility,
+    module_configuration,
+    outbound_sms,
+    website_monitoring,
+)
 from modules.auth.decorators import require_business_access, require_module
-from modules.models import AppointmentRequest, Business, ConversationSession, Lead, MissedCallEvent
+from modules.models import (
+    AppointmentRequest,
+    Business,
+    BusinessPhoneNumber,
+    ConversationSession,
+    Lead,
+    MissedCallEvent,
+)
 from modules.serializers import (
     appointment_dto,
     business_dto,
@@ -31,6 +45,87 @@ LEAD_WORKFLOW_STATUSES = {"new", "qualified", "needs_review", "scheduled", "clos
 CONVERSATION_STATES = {"awaiting_profile_selection", "in_progress", "completed", "terminated"}
 APPOINTMENT_STATUSES = {"pending", "scheduled", "declined", "cancelled", "sync_failed"}
 MAX_PAGE_SIZE = 100
+
+
+def _module_configuration_payload(business_id: str, module_key: str):
+    configuration, version = module_configuration.get_configuration(
+        g.db, business_id, module_key
+    )
+    return {
+        "module_key": module_key,
+        "schema_version": module_configuration.SCHEMA_VERSION,
+        "version": version,
+        "configuration": configuration,
+    }
+
+
+def _save_module_configuration(business_id: str, module_key: str):
+    payload = request.get_json(silent=True) or {}
+    configuration = payload.get("configuration")
+    if configuration is None:
+        return jsonify({"error": "configuration is required."}), 400
+    expected_version = payload.get("expected_version")
+    if expected_version is not None:
+        try:
+            expected_version = int(expected_version)
+        except (TypeError, ValueError):
+            return jsonify({"error": "expected_version must be a whole number."}), 400
+    try:
+        row = module_configuration.save_configuration(
+            g.db,
+            business_id,
+            module_key,
+            configuration,
+            expected_version=expected_version,
+        )
+    except module_configuration.ConfigurationValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except module_configuration.ConfigurationConflictError as exc:
+        return jsonify({"error": str(exc), "code": "configuration_conflict"}), 409
+
+    record_audit_event(
+        g.db,
+        action="business.module_configuration.update",
+        target_type="business_module_configuration",
+        target_id=module_key,
+        business_id=business_id,
+        actor_user_id=g.current_user.id,
+        details={
+            "module": module_key,
+            "version": row.version,
+            "configuration_keys": sorted(row.configuration.keys()),
+        },
+    )
+    g.db.commit()
+    return jsonify(_module_configuration_payload(business_id, module_key)), 200
+
+
+@client_bp.get("/businesses/<business_id>/ai-memory/configuration")
+@require_business_access()
+@require_module("ai_memory")
+def ai_memory_configuration(business_id: str):
+    return jsonify(_module_configuration_payload(business_id, "ai_memory")), 200
+
+
+@client_bp.put("/businesses/<business_id>/ai-memory/configuration")
+@require_business_access(write=True)
+@require_module("ai_memory")
+def update_ai_memory_configuration(business_id: str):
+    return _save_module_configuration(business_id, "ai_memory")
+
+
+@client_bp.get("/businesses/<business_id>/ai-scheduling/configuration")
+@require_business_access()
+@require_module("ai_scheduling")
+def ai_scheduling_configuration(business_id: str):
+    return jsonify(_module_configuration_payload(business_id, "ai_scheduling")), 200
+
+
+@client_bp.put("/businesses/<business_id>/ai-scheduling/configuration")
+@require_business_access(write=True)
+@require_module("ai_scheduling")
+def update_ai_scheduling_configuration(business_id: str):
+    return _save_module_configuration(business_id, "ai_scheduling")
 
 
 def _page_args() -> tuple[int, int]:
@@ -509,6 +604,68 @@ def update_appointment(business_id: str, appointment_id: int):
         details={"calendar_event_id": result.event_id, "duration_minutes": duration},
     )
     g.db.commit()
+
+    # Approval notifications belong to the paid AI Scheduling module. They are
+    # sent only after both the provider event and local scheduled state exist,
+    # so a customer can never receive a false confirmation after a sync error.
+    if (
+        entitlements.is_module_enabled(g.db, business_id, "ai_scheduling")
+        and not appointment.approval_message_sid
+    ):
+        scheduling_config, _ = module_configuration.get_configuration(
+            g.db, business_id, "ai_scheduling"
+        )
+        if scheduling_config["approval_notification_enabled"]:
+            sender = g.db.execute(
+                select(BusinessPhoneNumber).where(
+                    BusinessPhoneNumber.business_id == business_id,
+                    BusinessPhoneNumber.enabled.is_(True),
+                ).order_by(BusinessPhoneNumber.id.asc())
+            ).scalars().first()
+            if sender is None:
+                appointment.approval_message_error = "No enabled business SMS number is configured."
+            else:
+                local_start = start.astimezone(ZoneInfo(connection["timezone"]))
+                body = scheduling_config["approval_message_template"].format(
+                    business_name=business.name,
+                    customer_name=appointment.customer_name or "there",
+                    date=local_start.strftime("%A, %B %-d"),
+                    time=local_start.strftime("%-I:%M %p"),
+                )
+                try:
+                    appointment.approval_message_sid = outbound_sms.send(
+                        to=appointment.customer_phone,
+                        from_phone=sender.phone,
+                        body=body,
+                    )
+                    appointment.approval_message_sent_at = datetime.now(timezone.utc)
+                    appointment.approval_message_error = None
+                    record_audit_event(
+                        g.db,
+                        action="appointment.approval_notification.sent",
+                        target_type="appointment_request",
+                        target_id=str(appointment.id),
+                        business_id=business_id,
+                        actor_user_id=g.current_user.id,
+                        details={"message_sid": appointment.approval_message_sid},
+                    )
+                except Exception as exc:
+                    logger.exception(
+                        "Appointment approval SMS failed for business=%s appointment=%s",
+                        business_id,
+                        appointment.id,
+                    )
+                    appointment.approval_message_error = str(exc)[:255]
+                    record_audit_event(
+                        g.db,
+                        action="appointment.approval_notification.failed",
+                        target_type="appointment_request",
+                        target_id=str(appointment.id),
+                        business_id=business_id,
+                        actor_user_id=g.current_user.id,
+                        details={"error": appointment.approval_message_error},
+                    )
+            g.db.commit()
     return jsonify({"appointment": appointment_dto(appointment)}), 200
 
 
