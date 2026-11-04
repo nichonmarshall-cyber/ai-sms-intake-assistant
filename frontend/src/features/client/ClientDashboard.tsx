@@ -29,6 +29,7 @@ import { Appointments } from "./Appointments";
 import { Analytics } from "./Analytics";
 import { Website } from "./Website";
 import { LocalSEO, Reviews } from "./GoogleVisibility";
+import { AIMemory, AIScheduling } from "./AIModules";
 
 interface OverviewPayload {
   enabled_modules: NavModule[];
@@ -711,6 +712,8 @@ export function ClientDashboardRoutes({
       <Route path="conversations" element={<Conversations businessId={businessId} />} />
       <Route path="appointments" element={<Appointments businessId={businessId} readOnly={readOnly} />} />
       <Route path="ai_intake" element={<AIIntake businessId={businessId} readOnly={readOnly} />} />
+      <Route path="ai_memory" element={<AIMemory businessId={businessId} readOnly={readOnly} />} />
+      <Route path="ai_scheduling" element={<AIScheduling businessId={businessId} readOnly={readOnly} />} />
       <Route path="analytics" element={<Analytics businessId={businessId} />} />
       <Route path="website" element={<Website businessId={businessId} />} />
       <Route path="local_seo" element={<LocalSEO businessId={businessId} />} />

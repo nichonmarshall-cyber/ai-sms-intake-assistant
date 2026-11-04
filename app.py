@@ -56,7 +56,7 @@ def _check_env_vars() -> None:
 _check_env_vars()
 
 # --- Module imports (after load_dotenv so env vars are available) --------
-from modules import conversation_store, compliance, conversation_policy, intake_engine, menu_text, missed_call, openai_helper, sheets_helper, tenancy, twilio_helper
+from modules import conversation_store, compliance, conversation_policy, customer_memory, entitlements, intake_engine, menu_text, missed_call, openai_helper, sheets_helper, tenancy, twilio_helper
 from modules.business_hours import get_greeting, is_business_hours
 from modules.profiles import PROFILES, match_menu_selection
 from modules.db import init_db, session_scope, get_database_url, is_sqlite
@@ -425,14 +425,22 @@ def _handle_sms(
         conversation_store.touch(db, session)
         return finish(reply_text)
 
-    ai_result = openai_helper.get_ai_response(
-        session.history,
-        profile=profile,
-        is_demo=runtime.is_demo,
-        is_business_hours=is_business_hours(runtime.settings.get("business_hours")),
-        business_name=runtime.business_name,
-        next_field=next_field,
-    )
+    memory_context = None
+    if runtime.business_id and entitlements.is_module_enabled(db, runtime.business_id, "ai_memory"):
+        memory_context = customer_memory.context_packet(db, runtime.business_id, phone)
+
+    ai_kwargs = {
+        "profile": profile,
+        "is_demo": runtime.is_demo,
+        "is_business_hours": is_business_hours(runtime.settings.get("business_hours")),
+        "business_name": runtime.business_name,
+        "next_field": next_field,
+    }
+    # Do not add a new argument on the normal intake path; preserving the
+    # established call shape keeps integrations and tests backwards-compatible.
+    if memory_context:
+        ai_kwargs["memory_context"] = memory_context
+    ai_result = openai_helper.get_ai_response(session.history, **ai_kwargs)
 
     validated_fields = intake_engine.validate_extracted_fields(profile, ai_result.get("extracted_fields", {}))
     conversation_store.merge_fields(db, session, validated_fields, allowed_keys=set(profile.field_keys()))

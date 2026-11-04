@@ -261,6 +261,7 @@ def test_successful_approval_sends_configured_customer_message(demo_app):
                 "google-event-notify", "https://calendar.google.test/event"
             ),
         ),
+        patch("modules.calendar_service.slot_is_free", return_value=True),
         patch("modules.outbound_sms.send", return_value="SMapproval123") as send_mock,
     ):
         response = client.patch(
@@ -318,6 +319,30 @@ def test_calendar_failure_never_sends_approval_message(demo_app):
 
     assert response.status_code == 502
     send_mock.assert_not_called()
+
+
+def test_ai_scheduling_rechecks_slot_before_creating_event(demo_app):
+    business = make_business()
+    _owner(business)
+    appointment = _appointment(business.id)
+    db = session_scope()
+    try:
+        stored = db.get(Business, business.id)
+        stored.settings = {"calendar": {"calendar_id": "miller@example.test", "timezone": "America/Chicago", "verified_at": datetime.now(timezone.utc).isoformat(), "default_duration_minutes": 60}}
+        entitlements.set_module(db, business.id, "ai_scheduling", True)
+        db.commit()
+    finally:
+        db.close()
+    client, csrf, _ = login(demo_app, "calendar-owner@test.local", PASSWORD)
+    with patch("modules.calendar_service.slot_is_free", return_value=False), patch("modules.calendar_service.create_event") as create_mock:
+        response = client.patch(
+            f"/api/dashboard/businesses/{business.id}/appointments/{appointment.id}",
+            json={"action": "schedule", "scheduled_start": "2030-05-16T09:00"},
+            headers=auth_headers(csrf),
+        )
+    assert response.status_code == 409
+    assert response.get_json()["code"] == "slot_conflict"
+    create_mock.assert_not_called()
 
 
 def test_viewer_cannot_schedule_appointments(demo_app):

@@ -131,6 +131,7 @@ def get_ai_response(
     is_business_hours: bool,
     business_name: str,
     next_field,
+    memory_context: dict | None = None,
 ) -> dict:
     """
     Sends the full conversation history to OpenAI and returns a validated
@@ -150,6 +151,7 @@ def get_ai_response(
         is_business_hours=is_business_hours,
         business_name=business_name,
         next_field=next_field,
+        memory_context=memory_context,
     )
     timeout_seconds = float(os.getenv("OPENAI_TIMEOUT_SECONDS", "10"))
 

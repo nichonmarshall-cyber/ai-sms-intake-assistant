@@ -317,6 +317,14 @@ def record_lead(
         # Appointment projection must never lose a captured lead or break the
         # Twilio response path. The lead remains available for manual follow-up.
         logger.exception("[calendar] Could not create appointment request for lead %s", lead.id)
+    try:
+        from modules import entitlements
+        from modules.customer_memory import sync_completed_lead
+
+        if lead.business_id and entitlements.is_module_enabled(db, lead.business_id, "ai_memory"):
+            sync_completed_lead(db, lead)
+    except Exception:
+        logger.exception("[memory] Could not update customer memory for lead %s", lead.id)
     return lead
 
 

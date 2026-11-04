@@ -207,6 +207,72 @@ def create_event(
     return CalendarEventResult(event_id=provider_event_id, html_link=data.get("htmlLink"))
 
 
+def busy_intervals(calendar_id: str, start: datetime, end: datetime) -> list[tuple[datetime, datetime]]:
+    data = _request("POST", "/freeBusy", payload={
+        "timeMin": start.astimezone(timezone.utc).isoformat(),
+        "timeMax": end.astimezone(timezone.utc).isoformat(),
+        "items": [{"id": calendar_id}],
+    })
+    calendar = (data.get("calendars") or {}).get(calendar_id) or {}
+    if calendar.get("errors"):
+        raise CalendarProviderError("Google Calendar could not return availability for this calendar.")
+    intervals = []
+    for item in calendar.get("busy") or []:
+        try:
+            intervals.append((datetime.fromisoformat(item["start"].replace("Z", "+00:00")), datetime.fromisoformat(item["end"].replace("Z", "+00:00"))))
+        except (KeyError, ValueError, TypeError):
+            continue
+    return intervals
+
+
+def slot_is_free(
+    *, calendar_id: str, start: datetime, duration_minutes: int,
+    buffer_before_minutes: int = 0, buffer_after_minutes: int = 0,
+) -> bool:
+    end = start + timedelta(minutes=duration_minutes)
+    query_start = start - timedelta(minutes=buffer_before_minutes)
+    query_end = end + timedelta(minutes=buffer_after_minutes)
+    return not busy_intervals(calendar_id, query_start, query_end)
+
+
+def available_slots(
+    *, calendar_id: str, timezone_name: str, configuration: dict,
+    start_date, days: int, duration_minutes: int,
+) -> list[datetime]:
+    zone = ZoneInfo(validate_timezone(timezone_name))
+    notice = datetime.now(timezone.utc) + timedelta(minutes=configuration["minimum_notice_minutes"])
+    horizon = datetime.now(timezone.utc) + timedelta(days=configuration["maximum_advance_days"])
+    interval = configuration["slot_interval_minutes"]
+    before = configuration["buffer_before_minutes"]
+    after = configuration["buffer_after_minutes"]
+    first_local = datetime.combine(start_date, datetime.min.time(), tzinfo=zone)
+    last_local = first_local + timedelta(days=days)
+    busy = busy_intervals(
+        calendar_id,
+        first_local.astimezone(timezone.utc) - timedelta(minutes=before),
+        last_local.astimezone(timezone.utc) + timedelta(minutes=after),
+    )
+    slots = []
+    for offset in range(days):
+        day = start_date + timedelta(days=offset)
+        rule = configuration["working_hours"].get(str(day.weekday())) or {}
+        if not rule.get("enabled"):
+            continue
+        start_hour, start_minute = map(int, rule["start"].split(":"))
+        end_hour, end_minute = map(int, rule["end"].split(":"))
+        cursor = datetime.combine(day, datetime.min.time(), tzinfo=zone).replace(hour=start_hour, minute=start_minute)
+        close = datetime.combine(day, datetime.min.time(), tzinfo=zone).replace(hour=end_hour, minute=end_minute)
+        while cursor + timedelta(minutes=duration_minutes) <= close:
+            start_utc = cursor.astimezone(timezone.utc)
+            end_utc = start_utc + timedelta(minutes=duration_minutes)
+            blocked_start = start_utc - timedelta(minutes=before)
+            blocked_end = end_utc + timedelta(minutes=after)
+            if notice <= start_utc <= horizon and not any(blocked_start < busy_end and blocked_end > busy_start for busy_start, busy_end in busy):
+                slots.append(start_utc)
+            cursor += timedelta(minutes=interval)
+    return slots
+
+
 def ensure_request_for_lead(db: DBSession, lead: Lead) -> AppointmentRequest | None:
     """Create one pending appointment request when intake captured a preference."""
     if not lead.business_id or not lead.requested_callback_time:

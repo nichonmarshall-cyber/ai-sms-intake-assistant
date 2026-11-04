@@ -426,3 +426,85 @@ class BusinessModuleConfiguration(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
     )
+
+
+class CustomerMemory(Base):
+    """One bounded, tenant-scoped memory profile per customer phone number."""
+
+    __tablename__ = "customer_memories"
+    __table_args__ = (
+        UniqueConstraint("business_id", "phone", name="uq_customer_memories_business_phone"),
+        Index("ix_customer_memories_business_updated", "business_id", "updated_at"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    business_id: Mapped[str] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    customer_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    rolling_summary: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    summary_source_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    summary_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
+class CustomerMemoryRecord(Base):
+    """A configurable asset, job, property, pet, case, or other customer record."""
+
+    __tablename__ = "customer_memory_records"
+    __table_args__ = (Index("ix_customer_memory_records_customer_type", "customer_memory_id", "record_type"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    business_id: Mapped[str] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    customer_memory_id: Mapped[int] = mapped_column(
+        ForeignKey("customer_memories.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    record_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    label: Mapped[str] = mapped_column(String(160), nullable=False)
+    values: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    status: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )
+
+
+class MemoryUpdateProposal(Base):
+    """An AI suggestion that cannot change operational truth until approved."""
+
+    __tablename__ = "memory_update_proposals"
+    __table_args__ = (Index("ix_memory_proposals_business_status", "business_id", "status"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    business_id: Mapped[str] = mapped_column(
+        ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    customer_memory_id: Mapped[int] = mapped_column(
+        ForeignKey("customer_memories.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    record_id: Mapped[int | None] = mapped_column(
+        ForeignKey("customer_memory_records.id", ondelete="CASCADE"), nullable=True
+    )
+    record_type: Mapped[str] = mapped_column(String(48), nullable=False)
+    proposed_values: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    proposed_status: Mapped[str | None] = mapped_column(String(48), nullable=True)
+    reason: Mapped[str | None] = mapped_column(String(500), nullable=True)
+    source_session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("conversation_sessions.id", ondelete="SET NULL"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(24), nullable=False, default="pending")
+    resolved_by_user_id: Mapped[str | None] = mapped_column(
+        ForeignKey("platform_users.id", ondelete="SET NULL"), nullable=True
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
+    )

@@ -28,6 +28,7 @@ def build_system_prompt(
     is_business_hours: bool,
     business_name: str,
     next_field: FieldSpec | None,
+    memory_context: dict | None = None,
 ) -> str:
     hours_context = (
         "The business is currently OPEN."
@@ -71,6 +72,18 @@ def build_system_prompt(
             )
         )
 
+    memory_block = ""
+    if memory_context:
+        memory_block = (
+            "\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "VERIFIED CUSTOMER CONTEXT\n"
+            "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            "Use this only when it is relevant to the customer’s current request. "
+            "It is a limited, tenant-scoped context packet. Never expose hidden fields, "
+            "never claim an appointment is confirmed unless the application says so, and "
+            "never invent, modify, or promise operational facts.\n"
+            f"{memory_context}\n"
+        )
     field_schema = ",\n".join(_field_schema_line(f) for f in profile.fields)
     category_list = " | ".join(profile.categories)
     category_bullets = "\n".join(f"- {c}" for c in profile.categories)
@@ -99,6 +112,7 @@ WHAT THIS INDUSTRY PROFILE COVERS
 WHICH QUESTION TO ASK THIS TURN
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 {target_block}
+{memory_block}
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 QUESTION RULES

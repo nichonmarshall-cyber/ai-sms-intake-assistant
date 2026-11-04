@@ -96,6 +96,15 @@ DEFAULT_BUSINESS_SETTINGS = {
         "maximum_advance_days": 60,
         "slot_interval_minutes": 15,
         "max_bookings_per_day": None,
+        "working_hours": {
+            "0": {"enabled": True, "start": "08:00", "end": "17:00"},
+            "1": {"enabled": True, "start": "08:00", "end": "17:00"},
+            "2": {"enabled": True, "start": "08:00", "end": "17:00"},
+            "3": {"enabled": True, "start": "08:00", "end": "17:00"},
+            "4": {"enabled": True, "start": "08:00", "end": "17:00"},
+            "5": {"enabled": False, "start": "08:00", "end": "17:00"},
+            "6": {"enabled": False, "start": "08:00", "end": "17:00"},
+        },
         "services": [],
     },
 }

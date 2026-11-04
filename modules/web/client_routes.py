@@ -13,6 +13,7 @@ from sqlalchemy import Integer, String, cast, func, or_, select
 
 from modules import (
     calendar_service,
+    customer_memory,
     entitlements,
     google_visibility,
     module_configuration,
@@ -25,7 +26,10 @@ from modules.models import (
     Business,
     BusinessPhoneNumber,
     ConversationSession,
+    CustomerMemory,
+    CustomerMemoryRecord,
     Lead,
+    MemoryUpdateProposal,
     MissedCallEvent,
 )
 from modules.serializers import (
@@ -126,6 +130,149 @@ def ai_scheduling_configuration(business_id: str):
 @require_module("ai_scheduling")
 def update_ai_scheduling_configuration(business_id: str):
     return _save_module_configuration(business_id, "ai_scheduling")
+
+
+@client_bp.get("/businesses/<business_id>/ai-memory/customers")
+@require_business_access()
+@require_module("ai_memory")
+def memory_customers(business_id: str):
+    search = str(request.args.get("q") or "").strip().lower()
+    query = select(CustomerMemory).where(CustomerMemory.business_id == business_id)
+    if search:
+        pattern = f"%{search}%"
+        query = query.where(or_(
+            func.lower(CustomerMemory.phone).like(pattern),
+            func.lower(func.coalesce(CustomerMemory.customer_name, "")).like(pattern),
+        ))
+    rows = list(g.db.execute(query.order_by(CustomerMemory.updated_at.desc()).limit(100)).scalars())
+    pending = dict(g.db.execute(
+        select(MemoryUpdateProposal.customer_memory_id, func.count(MemoryUpdateProposal.id))
+        .where(MemoryUpdateProposal.business_id == business_id, MemoryUpdateProposal.status == "pending")
+        .group_by(MemoryUpdateProposal.customer_memory_id)
+    ).all())
+    return jsonify({"items": [customer_memory.customer_dto(row, pending_proposals=pending.get(row.id, 0)) for row in rows]}), 200
+
+
+@client_bp.post("/businesses/<business_id>/ai-memory/customers")
+@require_business_access(write=True)
+@require_module("ai_memory")
+def create_memory_customer(business_id: str):
+    payload = request.get_json(silent=True) or {}
+    try:
+        row = customer_memory.get_or_create_customer(
+            g.db, business_id, str(payload.get("phone") or ""),
+            customer_name=str(payload.get("customer_name") or "") or None,
+        )
+        customer_memory.rebuild_summary(g.db, row)
+    except customer_memory.MemoryValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    record_audit_event(g.db, action="memory.customer.create", target_type="customer_memory", target_id=str(row.id), business_id=business_id, actor_user_id=g.current_user.id)
+    g.db.commit()
+    return jsonify({"customer": customer_memory.customer_dto(row)}), 201
+
+
+@client_bp.get("/businesses/<business_id>/ai-memory/customers/<int:customer_id>")
+@require_business_access()
+@require_module("ai_memory")
+def memory_customer_detail(business_id: str, customer_id: int):
+    row = g.db.execute(select(CustomerMemory).where(CustomerMemory.id == customer_id, CustomerMemory.business_id == business_id)).scalar_one_or_none()
+    if row is None:
+        return jsonify({"error": "Customer memory not found."}), 404
+    records = list(g.db.execute(select(CustomerMemoryRecord).where(CustomerMemoryRecord.customer_memory_id == customer_id).order_by(CustomerMemoryRecord.updated_at.desc())).scalars())
+    proposals = list(g.db.execute(select(MemoryUpdateProposal).where(MemoryUpdateProposal.customer_memory_id == customer_id).order_by(MemoryUpdateProposal.created_at.desc())).scalars())
+    return jsonify({
+        "customer": customer_memory.customer_dto(row, pending_proposals=sum(item.status == "pending" for item in proposals)),
+        "records": [customer_memory.record_dto(item) for item in records],
+        "proposals": [customer_memory.proposal_dto(item) for item in proposals],
+        "context_packet": customer_memory.context_packet(g.db, business_id, row.phone),
+    }), 200
+
+
+@client_bp.post("/businesses/<business_id>/ai-memory/customers/<int:customer_id>/records")
+@require_business_access(write=True)
+@require_module("ai_memory")
+def create_memory_record(business_id: str, customer_id: int):
+    customer = g.db.execute(select(CustomerMemory).where(CustomerMemory.id == customer_id, CustomerMemory.business_id == business_id)).scalar_one_or_none()
+    if customer is None:
+        return jsonify({"error": "Customer memory not found."}), 404
+    try:
+        row = customer_memory.create_record(g.db, customer, request.get_json(silent=True) or {})
+    except customer_memory.MemoryValidationError as exc:
+        return jsonify({"error": str(exc)}), 400
+    record_audit_event(g.db, action="memory.record.create", target_type="customer_memory_record", target_id=str(row.id), business_id=business_id, actor_user_id=g.current_user.id, details={"record_type": row.record_type})
+    g.db.commit()
+    return jsonify({"record": customer_memory.record_dto(row)}), 201
+
+
+@client_bp.patch("/businesses/<business_id>/ai-memory/records/<int:record_id>")
+@require_business_access(write=True)
+@require_module("ai_memory")
+def update_memory_record(business_id: str, record_id: int):
+    row = g.db.execute(select(CustomerMemoryRecord).where(CustomerMemoryRecord.id == record_id, CustomerMemoryRecord.business_id == business_id)).scalar_one_or_none()
+    if row is None:
+        return jsonify({"error": "Memory record not found."}), 404
+    try:
+        customer_memory.update_record(g.db, row, request.get_json(silent=True) or {})
+    except (customer_memory.MemoryValidationError, TypeError, ValueError) as exc:
+        return jsonify({"error": str(exc)}), 400
+    record_audit_event(g.db, action="memory.record.update", target_type="customer_memory_record", target_id=str(row.id), business_id=business_id, actor_user_id=g.current_user.id, details={"version": row.version})
+    g.db.commit()
+    return jsonify({"record": customer_memory.record_dto(row)}), 200
+
+
+@client_bp.patch("/businesses/<business_id>/ai-memory/proposals/<int:proposal_id>")
+@require_business_access(write=True)
+@require_module("ai_memory")
+def resolve_memory_proposal(business_id: str, proposal_id: int):
+    proposal = g.db.execute(select(MemoryUpdateProposal).where(MemoryUpdateProposal.id == proposal_id, MemoryUpdateProposal.business_id == business_id)).scalar_one_or_none()
+    if proposal is None:
+        return jsonify({"error": "Memory proposal not found."}), 404
+    if proposal.status != "pending":
+        return jsonify({"error": "That proposal has already been resolved."}), 409
+    action = str((request.get_json(silent=True) or {}).get("action") or "").strip().lower()
+    if action not in {"approve", "reject"}:
+        return jsonify({"error": "Use action approve or reject."}), 400
+    if action == "approve":
+        if proposal.record_id:
+            record = g.db.execute(select(CustomerMemoryRecord).where(CustomerMemoryRecord.id == proposal.record_id, CustomerMemoryRecord.business_id == business_id)).scalar_one_or_none()
+            if record is None:
+                return jsonify({"error": "The target record no longer exists."}), 409
+            customer_memory.update_record(g.db, record, {"values": proposal.proposed_values, "status": proposal.proposed_status or record.status})
+        else:
+            customer = g.db.get(CustomerMemory, proposal.customer_memory_id)
+            record = customer_memory.create_record(g.db, customer, {"record_type": proposal.record_type, "values": proposal.proposed_values, "status": proposal.proposed_status})
+        proposal.status = "approved"
+    else:
+        proposal.status = "rejected"
+    proposal.resolved_by_user_id = g.current_user.id
+    proposal.resolved_at = datetime.now(timezone.utc)
+    record_audit_event(g.db, action=f"memory.proposal.{proposal.status}", target_type="memory_update_proposal", target_id=str(proposal.id), business_id=business_id, actor_user_id=g.current_user.id)
+    g.db.commit()
+    return jsonify({"proposal": customer_memory.proposal_dto(proposal)}), 200
+
+
+@client_bp.get("/businesses/<business_id>/ai-scheduling/availability")
+@require_business_access()
+@require_module("ai_scheduling")
+def scheduling_availability(business_id: str):
+    business = g.db.get(Business, business_id)
+    connection = calendar_service.calendar_settings(business)
+    if not connection["calendar_id"] or not connection["verified_at"]:
+        return jsonify({"error": "Connect and verify Google Calendar first."}), 409
+    config, _ = module_configuration.get_configuration(g.db, business_id, "ai_scheduling")
+    try:
+        start_date = datetime.fromisoformat(str(request.args.get("start_date") or datetime.now(timezone.utc).date())).date()
+        days = min(31, max(1, int(request.args.get("days") or 7)))
+        duration = min(480, max(15, int(request.args.get("duration_minutes") or connection["default_duration_minutes"])))
+        slots = calendar_service.available_slots(
+            calendar_id=connection["calendar_id"], timezone_name=connection["timezone"],
+            configuration=config, start_date=start_date, days=days, duration_minutes=duration,
+        )
+    except ValueError as exc:
+        return jsonify({"error": str(exc)}), 400
+    except (calendar_service.CalendarConfigurationError, calendar_service.CalendarProviderError) as exc:
+        return jsonify({"error": str(exc)}), 502
+    return jsonify({"slots": [slot.isoformat() for slot in slots[:100]], "timezone": connection["timezone"], "duration_minutes": duration}), 200
 
 
 def _page_args() -> tuple[int, int]:
@@ -570,6 +717,21 @@ def update_appointment(business_id: str, appointment_id: int):
     if start < datetime.now(timezone.utc) - timedelta(minutes=5):
         return jsonify({"error": "Choose a future appointment time."}), 400
 
+    scheduling_config = None
+    if entitlements.is_module_enabled(g.db, business_id, "ai_scheduling"):
+        scheduling_config, _ = module_configuration.get_configuration(g.db, business_id, "ai_scheduling")
+        try:
+            free = calendar_service.slot_is_free(
+                calendar_id=connection["calendar_id"], start=start,
+                duration_minutes=duration,
+                buffer_before_minutes=scheduling_config["buffer_before_minutes"],
+                buffer_after_minutes=scheduling_config["buffer_after_minutes"],
+            )
+        except (calendar_service.CalendarConfigurationError, calendar_service.CalendarProviderError) as exc:
+            return jsonify({"error": str(exc)}), 502
+        if not free:
+            return jsonify({"error": "That time is no longer available. Refresh availability and choose another slot.", "code": "slot_conflict"}), 409
+
     appointment.scheduled_start_at = start
     appointment.duration_minutes = duration
     appointment.scheduled_by_user_id = g.current_user.id
@@ -612,9 +774,10 @@ def update_appointment(business_id: str, appointment_id: int):
         entitlements.is_module_enabled(g.db, business_id, "ai_scheduling")
         and not appointment.approval_message_sid
     ):
-        scheduling_config, _ = module_configuration.get_configuration(
-            g.db, business_id, "ai_scheduling"
-        )
+        if scheduling_config is None:
+            scheduling_config, _ = module_configuration.get_configuration(
+                g.db, business_id, "ai_scheduling"
+            )
         if scheduling_config["approval_notification_enabled"]:
             sender = g.db.execute(
                 select(BusinessPhoneNumber).where(

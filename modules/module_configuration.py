@@ -179,7 +179,7 @@ def _validate_scheduling(configuration: dict) -> dict:
         "booking_mode", "buffer_before_minutes", "buffer_after_minutes",
         "minimum_notice_minutes", "maximum_advance_days", "slot_interval_minutes",
         "max_bookings_per_day", "services", "approval_notification_enabled",
-        "approval_message_template",
+        "approval_message_template", "working_hours",
     }
     unknown = set(raw) - allowed
     if unknown:
@@ -199,6 +199,18 @@ def _validate_scheduling(configuration: dict) -> dict:
         raise ConfigurationValidationError(
             f"Unsupported approval message placeholder: {sorted(unsupported)[0]}."
         )
+
+    raw_hours = _object(raw.get("working_hours", {}), "working_hours")
+    working_hours = {}
+    for day in range(7):
+        item = _object(raw_hours.get(str(day), {}), f"working_hours.{day}")
+        start = str(item.get("start") or "08:00")
+        end = str(item.get("end") or "17:00")
+        if not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", start) or not re.fullmatch(r"(?:[01]\d|2[0-3]):[0-5]\d", end):
+            raise ConfigurationValidationError("Working hours must use 24-hour HH:MM values.")
+        if start >= end:
+            raise ConfigurationValidationError("Each enabled day must end after it starts.")
+        working_hours[str(day)] = {"enabled": bool(item.get("enabled", False)), "start": start, "end": end}
 
     services = []
     service_keys: set[str] = set()
@@ -231,6 +243,7 @@ def _validate_scheduling(configuration: dict) -> dict:
         "maximum_advance_days": _integer(raw.get("maximum_advance_days", 60), "maximum_advance_days", 1, 365),
         "slot_interval_minutes": _integer(raw.get("slot_interval_minutes", 15), "slot_interval_minutes", 5, 120),
         "max_bookings_per_day": _integer(raw.get("max_bookings_per_day"), "max_bookings_per_day", 1, 500, nullable=True),
+        "working_hours": working_hours,
         "services": services,
     }
 
@@ -253,7 +266,9 @@ def get_configuration(db: DBSession, business_id: str, module_key: str) -> tuple
     ).scalar_one_or_none()
     if row is None:
         return validate_configuration(module_key, default), 0
-    return deepcopy(row.configuration), row.version
+    # Read-time validation also supplies defaults introduced by later schema
+    # revisions, so pre-existing tenant settings remain safe and usable.
+    return validate_configuration(module_key, deepcopy(row.configuration)), row.version
 
 
 def save_configuration(

@@ -103,6 +103,8 @@ def test_unimplemented_modules_are_flagged_not_faked(demo_app):
         "conversations",
         "appointments",
         "ai_intake",
+        "ai_memory",
+        "ai_scheduling",
         "website",
         "local_seo",
         "reviews",
@@ -110,5 +112,5 @@ def test_unimplemented_modules_are_flagged_not_faked(demo_app):
         "settings",
     }
 
-    for key in ("ai_memory", "ai_scheduling", "campaigns", "coupons"):
+    for key in ("campaigns", "coupons"):
         assert entitlements.MODULES_BY_KEY[key].implemented is False
