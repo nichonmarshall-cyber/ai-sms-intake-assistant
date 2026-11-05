@@ -174,32 +174,69 @@ def discover(connection: GoogleConnection) -> dict:
                     name = prop.get("property")
                     if name:
                         resources["ga4_properties"].append({"id": name, "name": prop.get("displayName") or name})
-        accounts = client.get("https://mybusinessaccountmanagement.googleapis.com/v1/accounts")
-        if accounts.is_success:
-            for account in accounts.json().get("accounts", []):
+        # Account and location APIs paginate independently. A location may
+        # otherwise be missing despite valid OAuth scopes and enabled APIs.
+        accounts_url = "https://mybusinessaccountmanagement.googleapis.com/v1/accounts"
+        account_token = None
+        seen_accounts = set()
+        while True:
+            params = {"pageSize": 100}
+            if account_token:
+                params["pageToken"] = account_token
+            accounts = client.get(accounts_url, params=params)
+            if not accounts.is_success:
+                resources["diagnostics"].append(
+                    f"Business Profile account lookup failed (HTTP {accounts.status_code}). "
+                    "Check the Business Account Management API, the connected account's "
+                    "listing access, and the business.manage OAuth permission."
+                )
+                break
+            account_payload = accounts.json()
+            for account in account_payload.get("accounts", []):
                 account_name = account.get("name")
-                if not account_name:
+                if not account_name or account_name in seen_accounts:
                     continue
-                locations = client.get(f"https://mybusinessbusinessinformation.googleapis.com/v1/{account_name}/locations", params={"readMask": "name,title,storefrontAddress,websiteUri"})
-                if locations.is_success:
-                    for location in locations.json().get("locations", []):
-                        if location.get("name"):
-                            # Business Information returns locations/123.  Keep the
-                            # parent account so the saved value also works with the
-                            # reviews endpoint (accounts/123/locations/456).
-                            location_name = location["name"]
-                            resources["business_locations"].append({
-                                "id": f"{account_name}/{location_name}",
-                                "name": location.get("title") or location_name,
-                                "website_url": location.get("websiteUri") or "",
-                            })
-                else:
-                    resources["diagnostics"].append(
-                        "Google Business Profile locations could not be read. Confirm the Business Information API is enabled for this Google Cloud project, then reconnect Google."
+                seen_accounts.add(account_name)
+                location_token = None
+                while True:
+                    location_params = {"readMask": "name,title,storefrontAddress,websiteUri", "pageSize": 100}
+                    if location_token:
+                        location_params["pageToken"] = location_token
+                    locations = client.get(
+                        f"https://mybusinessbusinessinformation.googleapis.com/v1/{account_name}/locations",
+                        params=location_params,
                     )
-        else:
+                    if not locations.is_success:
+                        resources["diagnostics"].append(
+                            f"Could not list locations for {account_name} (HTTP {locations.status_code}). "
+                            "Confirm the Business Information API is enabled and this Google account "
+                            "has access to the listing."
+                        )
+                        break
+                    location_payload = locations.json()
+                    for location in location_payload.get("locations", []):
+                        location_name = location.get("name", "")
+                        if not location_name:
+                            continue
+                        # Reviews v4 uses accounts/{id}/locations/{id}.
+                        resources["business_locations"].append({
+                            "id": f"{account_name}/{location_name}",
+                            "name": location.get("title") or location_name,
+                            "website_url": location.get("websiteUri") or "",
+                        })
+                    next_token = location_payload.get("nextPageToken")
+                    if not next_token or next_token == location_token:
+                        break
+                    location_token = next_token
+            next_account_token = account_payload.get("nextPageToken")
+            if not next_account_token or next_account_token == account_token:
+                break
+            account_token = next_account_token
+        if not resources["business_locations"] and not resources["diagnostics"]:
             resources["diagnostics"].append(
-                "Google Business Profile accounts could not be read. Confirm the Business Account Management API is enabled for this Google Cloud project, then reconnect Google."
+                "No Business Profile listings were returned. Make sure the connected "
+                "Google account is an owner or manager of the listing. API enablement "
+                "alone does not grant access to a business."
             )
     return resources
 
