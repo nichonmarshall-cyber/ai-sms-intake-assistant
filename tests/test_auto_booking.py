@@ -125,3 +125,75 @@ def test_failed_google_calendar_never_claims_booking(demo_app):
         assert appointment.calendar_event_id is None
     finally:
         db.close()
+
+
+
+def test_sms_intake_to_alternative_choice_books_without_employee(demo_app):
+    """The customer can finish intake and choose an available slot entirely by SMS."""
+    from modules.profiles import PROFILES
+    from modules.tenancy import LEGACY_BUSINESS_ID
+    from modules.models import Lead
+    from tests.conftest import send_sms, fake_ai_result
+
+    db = session_scope()
+    try:
+        business = db.get(Business, LEGACY_BUSINESS_ID)
+        business.settings = {
+            **business.settings,
+            "calendar": {
+                "calendar_id": "demo-test-calendar@example.test",
+                "timezone": "America/Chicago",
+                "verified_at": datetime.now(timezone.utc).isoformat(),
+                "default_duration_minutes": 60,
+            },
+        }
+        entitlements.set_module(db, business.id, "ai_scheduling", True)
+        config = module_configuration.default_configuration("ai_scheduling")
+        config["booking_mode"] = "automatic"
+        db.add(BusinessModuleConfiguration(
+            business_id=business.id, module_key="ai_scheduling",
+            configuration=config, version=1, schema_version=1,
+        ))
+        db.commit()
+    finally:
+        db.close()
+
+    phone = "+15559990123"
+    send_sms(demo_app, phone, "hi")
+    send_sms(demo_app, phone, "4")
+    profile = PROFILES["lawn_care"]
+    fields = {f.key: "answer" for f in profile.fields}
+    fields["customer_name"] = "Nicholas"
+    fields[profile.preference_field_key] = "Friday at 7pm"
+
+    requested = datetime(2030, 5, 17, 0, tzinfo=timezone.utc)
+    alternative = datetime(2030, 5, 16, 21, tzinfo=timezone.utc)
+    with (
+        patch("modules.openai_helper.get_ai_response",
+              return_value=fake_ai_result(profile, extracted_fields=fields)),
+        patch("modules.auto_booking.parse_requested_time", return_value=requested),
+        patch("modules.calendar_service.available_slots", side_effect=[[], [alternative]]),
+    ):
+        status, initial_reply = send_sms(demo_app, phone, "Friday at 7pm")
+    assert status == 200
+    assert "Reply 1, 2 or 3" in initial_reply
+
+    with (
+        patch("modules.calendar_service.available_slots", return_value=[alternative]),
+        patch("modules.calendar_service.slot_is_free", return_value=True),
+        patch("modules.calendar_service.create_event",
+              return_value=CalendarEventResult("demo-auto-e2e", None)),
+    ):
+        status, booked_reply = send_sms(demo_app, phone, "1")
+    assert status == 200
+    assert "Test booking added" in booked_reply
+    db = session_scope()
+    try:
+        booked = db.execute(select(AppointmentRequest).where(
+            AppointmentRequest.business_id == LEGACY_BUSINESS_ID,
+            AppointmentRequest.customer_phone == phone,
+        )).scalar_one()
+        assert booked.status == "scheduled"
+        assert booked.calendar_event_id == "demo-auto-e2e"
+    finally:
+        db.close()
