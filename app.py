@@ -56,7 +56,7 @@ def _check_env_vars() -> None:
 _check_env_vars()
 
 # --- Module imports (after load_dotenv so env vars are available) --------
-from modules import conversation_store, compliance, conversation_policy, customer_memory, entitlements, intake_engine, menu_text, missed_call, openai_helper, sheets_helper, tenancy, twilio_helper
+from modules import auto_booking, conversation_store, compliance, conversation_policy, customer_memory, entitlements, intake_engine, menu_text, missed_call, openai_helper, sheets_helper, tenancy, twilio_helper
 from modules.business_hours import get_greeting, is_business_hours
 from modules.profiles import PROFILES, match_menu_selection
 from modules.db import init_db, session_scope, get_database_url, is_sqlite
@@ -274,11 +274,17 @@ def _handle_sms(
                 is_demo=runtime.is_demo,
             )
         else:
-            reply = menu_text.build_completed_followup_text(
-                body,
-                runtime.is_demo,
-                show_profile_menu=runtime.show_profile_menu,
-            )
+            try:
+                reply = auto_booking.handle_followup(db, session, body, runtime)
+            except Exception:
+                logger.exception("[booking] Unexpected error handling booking follow-up.")
+                reply = None
+            if reply is None:
+                reply = menu_text.build_completed_followup_text(
+                    body,
+                    runtime.is_demo,
+                    show_profile_menu=runtime.show_profile_menu,
+                )
         conversation_store.add_assistant_message(db, session, reply)
         conversation_store.touch(db, session)
         return finish(reply)
@@ -492,10 +498,24 @@ def _handle_sms(
 
     if should_terminate:
         logger.info(f"[app] Terminating {phone} -- reason: {reason}")
-        conversation_store.add_assistant_message(db, session, reply_text)
         conversation_store.mark_terminated(db, session)
         status = "completed" if reason == "completed" else "escalated"
-        conversation_store.record_lead(db, session, ai_result, status=status)
+        lead = conversation_store.record_lead(db, session, ai_result, status=status)
+        if status == "completed":
+            try:
+                booking_reply = auto_booking.complete_intake(db, session, lead, runtime)
+                if booking_reply:
+                    reply_text = booking_reply
+            except Exception:
+                # Intake data remains saved; never claim a booking on failure.
+                logger.exception("[booking] Could not automatically schedule completed intake.")
+                reply_text = (
+                    "We recorded your request, but couldn't confirm a calendar booking. "
+                    "The team will follow up."
+                )
+                if runtime.is_demo:
+                    reply_text += " Demo only; no service arranged."
+        conversation_store.add_assistant_message(db, session, reply_text)
         _export_to_sheets(profile, session, ai_result)
     else:
         conversation_store.add_assistant_message(db, session, reply_text)
