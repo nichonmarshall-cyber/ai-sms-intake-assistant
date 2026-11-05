@@ -779,14 +779,14 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
               <p className="data-boundary-note data-boundary-note--inside">Example: G-355KXMFY4P. This identifies the website tag; it does not add the tag to the website by itself.</p>
               <Field label="Google Business Profile location" id="google-profile-location">
                 <select id="google-profile-location" className="input" disabled={readOnly} value={profileLocation} onChange={(event) => {
-                  const location = (googleResources?.business_locations || []).find((item) => item.id === event.target.value);
-                  setProfileLocation(event.target.value); if (location?.website_url && !profileUrl) setProfileUrl(location.website_url);
+                  setProfileLocation(event.target.value);
                 }}>
                   <option value="">Choose a Business Profile location</option>
                   {(googleResources?.business_locations || []).map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
                 </select>
               </Field>
-              {(googleResources?.diagnostics || []).map((message) => <p className="data-boundary-note data-boundary-note--inside" key={message}>{message}</p>)}
+              {googleResources?.business_locations.length === 0 && <p className="field__error" role="alert">No Business Profile location discovered. Verify that this Google account manages the listing; enabled APIs alone do not grant listing access.</p>}
+              {(googleResources?.diagnostics || []).map((message) => <p className="field__error" role="alert" key={message}>{message}</p>)}
               <Field label="Public Google listing link" id="google-listing-link">
                 <input id="google-listing-link" className="input" disabled={readOnly} value={profileUrl} placeholder="https://maps.app.goo.gl/..." onChange={(event) => setProfileUrl(event.target.value)} />
               </Field>

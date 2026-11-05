@@ -60,6 +60,20 @@ export function Appointments({ businessId, readOnly }: { businessId: string; rea
 
   useEffect(() => { void load(); }, [load]);
 
+  const retrySms = async (appointment: AppointmentRequest) => {
+    if (!window.confirm("Retry the appointment confirmation SMS? This will send a real text to the customer.")) return;
+    setWorking(appointment.id);
+    setError(null);
+    try {
+      await api.patch(`/api/dashboard/businesses/${businessId}/appointments/${appointment.id}`, { action: "retry_sms" });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not resend the confirmation.");
+    } finally {
+      setWorking(null);
+    }
+  };
+
   const update = async (appointment: AppointmentRequest, action: "schedule" | "decline") => {
     if (action === "decline" && !window.confirm(`Decline ${appointment.customer_name || appointment.customer_phone}'s request?`)) return;
     setWorking(appointment.id);
@@ -128,6 +142,7 @@ export function Appointments({ businessId, readOnly }: { businessId: string; rea
                     {appointment.scheduled_start_at && <small>Scheduled: {formatDate(appointment.scheduled_start_at)} · {appointment.duration_minutes} minutes</small>}
                     {appointment.approval_notification.sent && <small>Customer approval message sent {formatDate(appointment.approval_notification.sent_at)}</small>}
                     {appointment.approval_notification.error && <p className="appointment-row__error">Appointment scheduled, but the customer message was not sent: {appointment.approval_notification.error}</p>}
+                    {appointment.status === "scheduled" && appointment.approval_notification.error && !appointment.approval_notification.sent && <button className="btn" type="button" disabled={readOnly || working === appointment.id} onClick={() => void retrySms(appointment)}>{working === appointment.id ? "Retrying…" : "Retry customer SMS"}</button>}
                     {appointment.provider_error && <p className="appointment-row__error">{appointment.provider_error}</p>}
                   </div>
                   {(appointment.status === "pending" || appointment.status === "sync_failed") && (

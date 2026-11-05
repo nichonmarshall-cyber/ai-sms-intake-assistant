@@ -84,7 +84,7 @@ def search_console(property_url: str, days: int = 28, access_token: str | None =
         "impressions": total_row.get("impressions", 0),
         "ctr": total_row.get("ctr", 0),
         "position": total_row.get("position"),
-        "queries": [{"query": row["keys"][0], "clicks": row.get("clicks", 0), "impressions": row.get("impressions", 0)}
+        "queries": [{"query": row["keys"][0], "clicks": row.get("clicks", 0), "impressions": row.get("impressions", 0), "ctr": row.get("ctr", 0), "position": row.get("position")}
                     for row in queries.json().get("rows", []) if row.get("keys")],
     }
 

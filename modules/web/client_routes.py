@@ -713,6 +713,63 @@ def update_appointment(business_id: str, appointment_id: int):
     payload = request.get_json(silent=True) or {}
     action = str(payload.get("action") or "").strip().lower()
 
+    if action == "retry_sms":
+        if appointment.status != "scheduled" or not appointment.calendar_event_id or not appointment.scheduled_start_at:
+            return jsonify({"error": "Only a calendar-scheduled appointment can send a confirmation."}), 409
+        if not entitlements.is_module_enabled(g.db, business_id, "ai_scheduling"):
+            return jsonify({"error": "AI Scheduling notifications are not enabled for this business."}), 403
+        if appointment.approval_message_sid:
+            return jsonify({"error": "Confirmation already sent; duplicate delivery was prevented."}), 409
+        config, _ = module_configuration.get_configuration(g.db, business_id, "ai_scheduling")
+        if not config["approval_notification_enabled"]:
+            return jsonify({"error": "Enable approval notifications in AI Scheduling settings first."}), 409
+        sender = g.db.execute(select(BusinessPhoneNumber).where(
+            BusinessPhoneNumber.business_id == business_id,
+            BusinessPhoneNumber.enabled.is_(True),
+        ).order_by(BusinessPhoneNumber.id.asc())).scalars().first()
+        if sender is None:
+            appointment.approval_message_error = "No enabled business SMS number is configured."
+            g.db.commit()
+            return jsonify({"error": appointment.approval_message_error, "appointment": appointment_dto(appointment)}), 409
+        business = g.db.get(Business, business_id)
+        calendar_config = calendar_service.calendar_settings(business)
+        local_start = appointment.scheduled_start_at
+        if local_start.tzinfo is None:
+            local_start = local_start.replace(tzinfo=timezone.utc)
+        local_start = local_start.astimezone(ZoneInfo(calendar_config["timezone"]))
+        body = config["approval_message_template"].format(
+            business_name=business.name,
+            customer_name=appointment.customer_name or "there",
+            date=local_start.strftime("%A, %B %-d"),
+            time=local_start.strftime("%-I:%M %p"),
+        )
+        try:
+            sid = outbound_sms.send(
+                to=appointment.customer_phone, from_phone=sender.phone, body=body,
+            )
+            appointment.approval_message_sid = sid
+            appointment.approval_message_sent_at = datetime.now(timezone.utc)
+            appointment.approval_message_error = None
+            record_audit_event(
+                g.db, action="appointment.approval_notification.sent",
+                target_type="appointment_request", target_id=str(appointment.id),
+                business_id=business_id, actor_user_id=g.current_user.id,
+                details={"message_sid": sid, "manual_retry": True},
+            )
+            g.db.commit()
+            return jsonify({"appointment": appointment_dto(appointment)}), 200
+        except Exception as exc:
+            logger.exception("Retry approval SMS failed for business=%s appointment=%s", business_id, appointment.id)
+            appointment.approval_message_error = str(exc)[:255]
+            record_audit_event(
+                g.db, action="appointment.approval_notification.failed",
+                target_type="appointment_request", target_id=str(appointment.id),
+                business_id=business_id, actor_user_id=g.current_user.id,
+                details={"error": appointment.approval_message_error, "manual_retry": True},
+            )
+            g.db.commit()
+            return jsonify({"error": appointment.approval_message_error, "appointment": appointment_dto(appointment)}), 502
+
     if action == "decline":
         if appointment.status == "scheduled":
             return jsonify({"error": "A scheduled calendar event cannot be declined here."}), 409
