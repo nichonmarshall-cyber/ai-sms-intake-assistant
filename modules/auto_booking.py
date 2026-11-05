@@ -31,18 +31,18 @@ def _configured(db, business_id: str, service_request: str | None):
         return None
     config, _ = module_configuration.get_configuration(db, business_id, "ai_scheduling")
     duration = None
+    booking_mode = config["booking_mode"]
     for service in config["services"]:
         if not service["enabled"]:
             continue
         if (service_request or "").strip().lower() in {service["label"].lower(), service["key"].replace("_", " ")}:
-            if service["booking_mode"] != "automatic":
-                return None
+            booking_mode = service["booking_mode"]
             duration = service["duration_minutes"]
             config = {**config,
                       "buffer_before_minutes": service["buffer_before_minutes"],
                       "buffer_after_minutes": service["buffer_after_minutes"]}
             break
-    if config["booking_mode"] != "automatic":
+    if booking_mode != "automatic":
         return None
     return config, duration
 
@@ -83,6 +83,9 @@ def _offer_options(db, session, appointment, desired, business, calendar, config
         configuration=config, start_date=target.date(), days=7,
         duration_minutes=duration,
     )
+    slots = [slot for slot in slots if not _max_bookings_reached(
+        db, appointment.business_id, slot, zone, config
+    )]
     nearby = sorted(slots, key=lambda slot: (
         0 if slot.astimezone(zone).date() == target.date() else 1,
         abs((slot - desired).total_seconds()),
@@ -270,7 +273,8 @@ def handle_followup(db, session, body: str, runtime) -> str | None:
             requested = parse_requested_time(answer, calendar["timezone"])
         if requested is None:
             return "Reply with one of the offered numbers or an exact date and time, such as Friday at 4 PM."
-        appointment.requested_time_text = answer[:160]
+        if answer not in {"1", "2", "3"}:
+            appointment.requested_time_text = answer[:160]
         return _book_or_offer(db, session, appointment, requested, runtime, config,
                               service_duration or calendar["default_duration_minutes"])
     except (ValueError, KeyError, TypeError):
