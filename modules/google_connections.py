@@ -162,7 +162,7 @@ def discover(connection: GoogleConnection) -> dict:
     """Return only resources available to this business's connected account."""
     token = access_token(connection)
     headers = {"Authorization": f"Bearer {token}"}
-    resources = {"search_properties": [], "ga4_properties": [], "business_locations": []}
+    resources = {"search_properties": [], "ga4_properties": [], "business_locations": [], "diagnostics": []}
     with httpx.Client(timeout=15.0, headers=headers) as client:
         search = client.get("https://www.googleapis.com/webmasters/v3/sites")
         if search.is_success:
@@ -184,10 +184,23 @@ def discover(connection: GoogleConnection) -> dict:
                 if locations.is_success:
                     for location in locations.json().get("locations", []):
                         if location.get("name"):
+                            # Business Information returns locations/123.  Keep the
+                            # parent account so the saved value also works with the
+                            # reviews endpoint (accounts/123/locations/456).
+                            location_name = location["name"]
                             resources["business_locations"].append({
-                                "id": location["name"], "name": location.get("title") or location["name"],
+                                "id": f"{account_name}/{location_name}",
+                                "name": location.get("title") or location_name,
                                 "website_url": location.get("websiteUri") or "",
                             })
+                else:
+                    resources["diagnostics"].append(
+                        "Google Business Profile locations could not be read. Confirm the Business Information API is enabled for this Google Cloud project, then reconnect Google."
+                    )
+        else:
+            resources["diagnostics"].append(
+                "Google Business Profile accounts could not be read. Confirm the Business Account Management API is enabled for this Google Cloud project, then reconnect Google."
+            )
     return resources
 
 
