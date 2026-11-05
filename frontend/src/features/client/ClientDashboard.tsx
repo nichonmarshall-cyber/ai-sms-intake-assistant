@@ -779,8 +779,7 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
               <p className="data-boundary-note data-boundary-note--inside">Example: G-355KXMFY4P. This identifies the website tag; it does not add the tag to the website by itself.</p>
               <Field label="Google Business Profile location" id="google-profile-location">
                 <select id="google-profile-location" className="input" disabled={readOnly} value={profileLocation} onChange={(event) => {
-                  const location = (googleResources?.business_locations || []).find((item) => item.id === event.target.value);
-                  setProfileLocation(event.target.value); // The website URL is not a Google Maps listing URL.
+                  setProfileLocation(event.target.value);
                 }}>
                   <option value="">Choose a Business Profile location</option>
                   {(googleResources?.business_locations || []).map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
