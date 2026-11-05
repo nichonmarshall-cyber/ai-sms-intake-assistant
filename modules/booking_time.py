@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 WEEKDAYS = {day.lower(): index for index, day in enumerate(calendar.day_name)}
-MONTHS = {month.lower(): index for index, month in enumerate(calendar.month_name) if month}
+MONTHS = {label: index for index, name in enumerate(calendar.month_name) if name for label in (name.lower(), name[:3].lower())}
 CLOCK = re.compile(r"(?<![\d:])(?P<hour>1[0-2]|0?[1-9])(?::(?P<minute>[0-5]\d))?\s*(?P<ampm>a\.?m\.?|p\.?m\.?)(?![a-z])", re.I)
 CLOCK24 = re.compile(r"(?<!\d)(?P<hour>[01]?\d|2[0-3]):(?P<minute>[0-5]\d)(?!\d)")
 DATE_ISO = re.compile(r"\b(20\d{2})-(\d{1,2})-(\d{1,2})\b")
@@ -42,7 +42,11 @@ def parse_requested_time(value: str, timezone_name: str, *, now: datetime | None
     Never invent AM/PM for bare numbers, nor guess from ranges / multiple times.
     """
     phrase = str(value or "").strip().lower()
-    if not phrase or len(phrase) > 160 or re.search(r"\d\s*(?:-|to)\s*\d", phrase):
+    if not phrase or len(phrase) > 160:
+        return None
+    # Strip ISO and slash dates before looking for time ranges such as 4-5pm.
+    without_dates = DATE_NUMERIC.sub(" ", DATE_ISO.sub(" ", phrase))
+    if re.search(r"(?<!\d)\d{1,2}(?::[0-5]\d)?\s*(?:am|pm)?\s*(?:-|to)\s*\d{1,2}", without_dates):
         return None
     zone = ZoneInfo(timezone_name)
     moment = (now or datetime.now(timezone.utc)).astimezone(zone)
@@ -95,6 +99,10 @@ def parse_requested_time(value: str, timezone_name: str, *, now: datetime | None
     except (ValueError, OverflowError):
         return None
     if target is None:
+        return None
+    # A conflicting named weekday and calendar date must never be guessed.
+    named_weekday = WEEKDAY.search(phrase)
+    if named_weekday and (iso_match or numeric_match or month_match) and target.weekday() != WEEKDAYS[named_weekday.group(1)]:
         return None
     result = _localize_strict(target, hour, minute, zone)
     if result is None:
