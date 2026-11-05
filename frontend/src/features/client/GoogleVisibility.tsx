@@ -8,7 +8,7 @@ interface SearchData {
   impressions: number;
   ctr: number;
   position: number | null;
-  queries: { query: string; clicks: number; impressions: number }[];
+  queries: { query: string; clicks: number; impressions: number; ctr: number; position: number | null }[];
 }
 interface ReviewData {
   average_rating: number | null;
@@ -51,8 +51,8 @@ export function LocalSEO({ businessId }: { businessId: string }) {
     {data?.data && <>
       <p className="page-footnote">Google Search Console · {data.data.period.start} to {data.data.period.end} · {data.property}</p>
       <div className="stat-grid"><Stat label="Search clicks" value={data.data.clicks} icon="↗" /><Stat label="Impressions" value={data.data.impressions} icon="◎" /><Stat label="Click rate" value={`${(data.data.ctr * 100).toFixed(1)}%`} icon="%" /><Stat label="Average position" value={data.data.position?.toFixed(1) ?? "—"} icon="#" /></div>
-      <Card title="Search queries">{data.data.queries.length ? <div className="management-list">{data.data.queries.map((row) => <div className="management-list__item" key={row.query}><span><strong>{row.query}</strong><small>{row.impressions} impressions</small></span><strong>{row.clicks} clicks</strong></div>)}</div> : <EmptyState title="No queries in this period" body="Search Console has no query rows to report yet." />}</Card>
-      <p className="page-footnote">These are website results from Google Search, not a local map ranking or a guarantee of position in Denton.</p>
+      <Card title="Top search queries and average Google positions">{data.data.queries.length ? <div className="management-list">{data.data.queries.map((row) => <div className="management-list__item" key={row.query}><span><strong>{row.query}</strong><small>{row.impressions} impressions · {row.clicks} clicks · {(row.ctr * 100).toFixed(1)}% CTR</small></span><strong>Avg. #{row.position?.toFixed(1) ?? "—"}</strong></div>)}</div> : <EmptyState title="No queries in this period" body="Search Console has no query rows to report yet." />}</Card>
+      <p className="page-footnote">Position is an impression-weighted average across searches, devices, and locations—not a fixed ranking for a keyword in Denton. Search Console is delayed by approximately 2–3 days and does not provide Google Maps rankings.</p>
     </>}
   </>;
 }
