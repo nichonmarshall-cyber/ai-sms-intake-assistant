@@ -79,6 +79,7 @@ interface GoogleResources {
   search_properties: string[];
   ga4_properties: { id: string; name: string }[];
   business_locations: { id: string; name: string; website_url: string }[];
+  diagnostics?: string[];
 }
 
 interface LeadsPayload extends Paged<Lead> {
@@ -785,6 +786,7 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
                   {(googleResources?.business_locations || []).map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
                 </select>
               </Field>
+              {(googleResources?.diagnostics || []).map((message) => <p className="data-boundary-note data-boundary-note--inside" key={message}>{message}</p>)}
               <Field label="Public Google listing link" id="google-listing-link">
                 <input id="google-listing-link" className="input" disabled={readOnly} value={profileUrl} placeholder="https://maps.app.goo.gl/..." onChange={(event) => setProfileUrl(event.target.value)} />
               </Field>
