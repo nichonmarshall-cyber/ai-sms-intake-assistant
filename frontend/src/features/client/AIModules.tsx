@@ -94,11 +94,12 @@ export function AIScheduling({ businessId, readOnly }: { businessId: string; rea
   const [slots, setSlots] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [savedNotice, setSavedNotice] = useState("");
   useEffect(() => { api.get<ModuleConfiguration<SchedulingConfig>>(`/api/dashboard/businesses/${businessId}/ai-scheduling/configuration`).then(setConfig).catch((e: Error) => setError(e.message)); }, [businessId]);
-  const update = (patch: Partial<SchedulingConfig>) => config && setConfig({ ...config, configuration: { ...config.configuration, ...patch } });
+  const update = (patch: Partial<SchedulingConfig>) => { setSavedNotice(""); if (config) setConfig({ ...config, configuration: { ...config.configuration, ...patch } }); };
   const save = async () => {
     if (!config) return; setSaving(true);
-    try { setConfig(await api.put(`/api/dashboard/businesses/${businessId}/ai-scheduling/configuration`, { expected_version: config.version, configuration: config.configuration })); setError(null); }
+    try { setConfig(await api.put(`/api/dashboard/businesses/${businessId}/ai-scheduling/configuration`, { expected_version: config.version, configuration: config.configuration })); setError(null); setSavedNotice("Scheduling rules saved. New SMS requests will use these settings."); }
     catch (e) { setError(e instanceof Error ? e.message : "Could not save scheduling rules."); }
     finally { setSaving(false); }
   };
@@ -114,10 +115,16 @@ export function AIScheduling({ businessId, readOnly }: { businessId: string; rea
       <Card title="Booking rules"><div className="inline-form-grid">
         <Field label="Booking mode" id="booking-mode"><select id="booking-mode" className="input" disabled={readOnly} value={config.configuration.booking_mode} onChange={(e) => update({ booking_mode: e.target.value as SchedulingConfig["booking_mode"] })}><option value="approval_required">Employee approval required</option><option value="automatic">Automatic booking</option></select></Field>
         {(["buffer_before_minutes", "buffer_after_minutes", "minimum_notice_minutes", "maximum_advance_days", "slot_interval_minutes"] as const).map((key) => <Field key={key} label={key.replace(/_/g, " ")} id={key}><input id={key} className="input" type="number" min="0" disabled={readOnly} value={config.configuration[key]} onChange={(e) => update({ [key]: Number(e.target.value) })} /></Field>)}
-      </div></Card>
+        <Field label="Maximum bookings per day (optional)" id="max-bookings"><input id="max-bookings" className="input" type="number" min="1" disabled={readOnly} value={config.configuration.max_bookings_per_day ?? ""} onChange={(e) => update({ max_bookings_per_day: e.target.value ? Math.max(1, Number(e.target.value)) : null })} /></Field>
+      </div>
+      <p className="form-hint">{config.configuration.booking_mode === "automatic"
+        ? "Automatic SMS booking: complete requests with an exact date and time are checked against Google Calendar, working hours, buffers and notice limits. Unavailable times trigger SMS alternatives. Click Save scheduling rules to activate changes."
+        : "Employee approval required: SMS captures the preferred time, but no appointment is booked until staff approves it."}</p>
+      </Card>
       <Card title="Working hours"><div className="management-list">{DAY_NAMES.map((name, day) => { const rule = config.configuration.working_hours[String(day)]; return <div className="management-list__item" key={name}><label><input type="checkbox" checked={rule.enabled} disabled={readOnly} onChange={(e) => update({ working_hours: { ...config.configuration.working_hours, [String(day)]: { ...rule, enabled: e.target.checked } } })} /> <strong>{name}</strong></label><span><input className="input" type="time" value={rule.start} disabled={readOnly || !rule.enabled} onChange={(e) => update({ working_hours: { ...config.configuration.working_hours, [String(day)]: { ...rule, start: e.target.value } } })} /><input className="input" type="time" value={rule.end} disabled={readOnly || !rule.enabled} onChange={(e) => update({ working_hours: { ...config.configuration.working_hours, [String(day)]: { ...rule, end: e.target.value } } })} /></span></div>; })}</div></Card>
-      <Card title="Approval message"><Field label="SMS sent after a successful booking" id="approval-template"><textarea id="approval-template" className="input" rows={4} disabled={readOnly} value={config.configuration.approval_message_template} onChange={(e) => update({ approval_message_template: e.target.value })} /></Field><p className="form-hint">Available fields: {"{business_name}"}, {"{customer_name}"}, {"{date}"}, {"{time}"}.</p></Card>
+      <Card title="Approval message"><Field label={config.configuration.booking_mode === "automatic" ? "Manual approval SMS (automatic booking replies are separate)" : "SMS sent after manual approval"} id="approval-template"><textarea id="approval-template" className="input" rows={4} disabled={readOnly} value={config.configuration.approval_message_template} onChange={(e) => update({ approval_message_template: e.target.value })} /></Field><p className="form-hint">Available fields: {"{business_name}"}, {"{customer_name}"}, {"{date}"}, {"{time}"}.</p></Card>
       <div className="page-heading-actions"><button className="btn btn--primary" disabled={readOnly || saving} onClick={() => void save()}>{saving ? "Saving…" : "Save scheduling rules"}</button><button className="btn" onClick={() => void preview()}>Preview next 7 days</button></div>
+      {savedNotice && <p className="calendar-success" role="status">{savedNotice}</p>}
       {slots.length > 0 && <Card title="Live available slots"><div className="management-list">{upcoming.map((slot) => <div className="management-list__item" key={slot}><strong>{new Date(slot).toLocaleString()}</strong></div>)}</div></Card>}
     </>}
   </>;
