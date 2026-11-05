@@ -17,6 +17,7 @@ from google.oauth2.service_account import Credentials as ServiceCredentials
 SEARCH_SCOPE = "https://www.googleapis.com/auth/webmasters.readonly"
 BUSINESS_SCOPE = "https://www.googleapis.com/auth/business.manage"
 LOCATION_PATTERN = re.compile(r"^accounts/[0-9]+/locations/[0-9]+$")
+MEASUREMENT_ID_PATTERN = re.compile(r"^G-[A-Z0-9]{6,20}$")
 
 
 def validate_property(value: str) -> str:
@@ -60,9 +61,9 @@ def _search_token() -> str:
     return credentials.token
 
 
-def search_console(property_url: str, days: int = 28) -> dict:
+def search_console(property_url: str, days: int = 28, access_token: str | None = None) -> dict:
     """Aggregate one property and fetch its most-clicked queries; no cross-tenant cache."""
-    token = _search_token()
+    token = access_token or _search_token()
     today = datetime.now(timezone.utc).date()
     # Search Console defaults to finalized data; allow its normal reporting lag.
     end = today - timedelta(days=3)
@@ -102,8 +103,8 @@ def _business_token() -> str:
     return credentials.token
 
 
-def reviews(location: str) -> dict:
-    token = _business_token()
+def reviews(location: str, access_token: str | None = None) -> dict:
+    token = access_token or _business_token()
     response = httpx.get(
         f"https://mybusiness.googleapis.com/v4/{location}/reviews",
         headers={"Authorization": f"Bearer {token}"},

@@ -84,6 +84,12 @@ services:
         value: "false"
       - key: GOOGLE_SERVICE_ACCOUNT_JSON
         sync: false
+      - key: GOOGLE_OAUTH_CLIENT_ID
+        sync: false
+      - key: GOOGLE_OAUTH_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CONNECTION_ENCRYPTION_KEY
+        sync: false
       - key: GOOGLE_SHEET_ID
         sync: false
       - key: CLIENT_SHEET_NAME

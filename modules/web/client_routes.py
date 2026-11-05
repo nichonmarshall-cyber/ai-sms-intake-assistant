@@ -15,6 +15,7 @@ from modules import (
     calendar_service,
     customer_memory,
     entitlements,
+    google_connections,
     google_visibility,
     module_configuration,
     outbound_sms,
@@ -31,6 +32,7 @@ from modules.models import (
     Lead,
     MemoryUpdateProposal,
     MissedCallEvent,
+    GoogleConnection,
 )
 from modules.serializers import (
     appointment_dto,
@@ -356,12 +358,17 @@ def website_health(business_id: str):
 @require_module("local_seo")
 def local_seo(business_id: str):
     business = g.db.get(Business, business_id)
-    property_url = ((business.settings or {}).get("google_visibility") or {}).get("search_property") or ""
-    if not property_url or not os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip():
+    connection = g.db.execute(select(GoogleConnection).where(GoogleConnection.business_id == business_id)).scalar_one_or_none()
+    property_url = (connection.search_property if connection else "") or ((business.settings or {}).get("google_visibility") or {}).get("search_property") or ""
+    if not property_url:
         return jsonify({"status": "not_connected", "property": property_url, "data": None}), 200
     try:
-        return jsonify({"status": "connected", "property": property_url,
-                        "data": google_visibility.search_console(property_url)}), 200
+        token = google_connections.access_token(connection) if connection else None
+        if connection is None and not os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "").strip():
+            return jsonify({"status": "not_connected", "property": property_url, "data": None}), 200
+        data = (google_visibility.search_console(property_url, access_token=token)
+                if token else google_visibility.search_console(property_url))
+        return jsonify({"status": "connected", "property": property_url, "data": data}), 200
     except Exception:
         logger.exception("Search Console unavailable for business %s", business_id)
         return jsonify({"status": "unavailable", "property": property_url, "data": None}), 200
@@ -373,18 +380,34 @@ def local_seo(business_id: str):
 def business_reviews(business_id: str):
     business = g.db.get(Business, business_id)
     config = (business.settings or {}).get("google_visibility") or {}
-    location = config.get("profile_location") or ""
-    profile_url = config.get("profile_url") or ""
+    connection = g.db.execute(select(GoogleConnection).where(GoogleConnection.business_id == business_id)).scalar_one_or_none()
+    location = (connection.profile_location if connection else "") or config.get("profile_location") or ""
+    profile_url = (connection.profile_url if connection else "") or config.get("profile_url") or ""
     configured = all(os.getenv(key, "").strip() for key in
                      ("GOOGLE_BUSINESS_CLIENT_ID", "GOOGLE_BUSINESS_CLIENT_SECRET", "GOOGLE_BUSINESS_REFRESH_TOKEN"))
-    if not location or not configured:
+    if not location or (connection is None and not configured):
         return jsonify({"status": "not_connected", "profile_url": profile_url, "data": None}), 200
     try:
-        return jsonify({"status": "connected", "profile_url": profile_url,
-                        "data": google_visibility.reviews(location)}), 200
+        token = google_connections.access_token(connection) if connection else None
+        data = (google_visibility.reviews(location, access_token=token)
+                if token else google_visibility.reviews(location))
+        return jsonify({"status": "connected", "profile_url": profile_url, "data": data}), 200
     except Exception:
         logger.exception("Business Profile reviews unavailable for business %s", business_id)
         return jsonify({"status": "unavailable", "profile_url": profile_url, "data": None}), 200
+
+
+@client_bp.get("/businesses/<business_id>/website-analytics")
+@require_business_access()
+@require_module("analytics")
+def website_analytics(business_id: str):
+    connection = g.db.execute(select(GoogleConnection).where(GoogleConnection.business_id == business_id)).scalar_one_or_none()
+    if connection is None or not connection.ga4_property:
+        return jsonify({"status": "not_connected", "data": None}), 200
+    try:
+        return jsonify({"status": "connected", "measurement_id": connection.ga4_measurement_id or "", "data": google_connections.ga4_report(connection)}), 200
+    except google_connections.GoogleConnectionError as exc:
+        return jsonify({"status": "unavailable", "error": str(exc), "data": None}), 200
 
 
 @client_bp.get("/businesses/<business_id>/overview")

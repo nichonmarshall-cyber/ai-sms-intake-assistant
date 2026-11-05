@@ -13,6 +13,7 @@ from flask import Flask
 from modules.web.auth_routes import auth_bp
 from modules.web.admin_routes import admin_bp
 from modules.web.client_routes import client_bp
+from modules.web.google_routes import google_bp
 from modules.web.spa import spa_bp
 
 
@@ -20,4 +21,5 @@ def register_blueprints(app: Flask) -> None:
     app.register_blueprint(auth_bp)
     app.register_blueprint(admin_bp)
     app.register_blueprint(client_bp)
+    app.register_blueprint(google_bp)
     app.register_blueprint(spa_bp)

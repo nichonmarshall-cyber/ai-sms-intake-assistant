@@ -26,6 +26,12 @@ interface Breakdown {
   count: number;
 }
 
+interface WebsiteAnalyticsResponse {
+  status: "connected" | "not_connected" | "unavailable";
+  error?: string;
+  data: { period: { start: string; end: string }; sources: { source: string; sessions: number; users: number; events: number }[] } | null;
+}
+
 const RANGE_OPTIONS = [7, 30, 90] as const;
 
 function readable(value: string): string {
@@ -88,6 +94,7 @@ export function Analytics({ businessId }: { businessId: string }) {
   const [data, setData] = useState<AnalyticsPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [websiteAnalytics, setWebsiteAnalytics] = useState<WebsiteAnalyticsResponse | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -101,6 +108,9 @@ export function Analytics({ businessId }: { businessId: string }) {
       })
       .catch((err: Error) => !cancelled && setError(err.message))
       .finally(() => !cancelled && setLoading(false));
+    api.get<WebsiteAnalyticsResponse>(`/api/dashboard/businesses/${businessId}/website-analytics`)
+      .then((payload) => !cancelled && setWebsiteAnalytics(payload))
+      .catch(() => !cancelled && setWebsiteAnalytics({ status: "unavailable", error: "Website analytics could not be reached.", data: null }));
     return () => { cancelled = true; };
   }, [businessId, days]);
 
@@ -145,6 +155,12 @@ export function Analytics({ businessId }: { businessId: string }) {
           </Card>
 
           <div className="analytics-grid">
+            <Card title="Website traffic sources">
+              {websiteAnalytics?.status === "connected" && websiteAnalytics.data ? <>
+                <p className="analytics-period">GA4 · {websiteAnalytics.data.period.start} to {websiteAnalytics.data.period.end}</p>
+                <div className="management-list">{websiteAnalytics.data.sources.length ? websiteAnalytics.data.sources.map((item) => <div className="management-list__item" key={item.source}><span><strong>{item.source}</strong><small>{item.users} users · {item.events} tracked events</small></span><strong>{item.sessions} sessions</strong></div>) : <span>No GA4 traffic has been recorded yet.</span>}</div>
+              </> : <EmptyState title={websiteAnalytics?.status === "unavailable" ? "GA4 temporarily unavailable" : "Website analytics not connected"} body={websiteAnalytics?.status === "unavailable" ? (websiteAnalytics.error || "Reconnect Google if access was revoked.") : "Connect Google and choose the GA4 property in Settings. The website must also have its GA4 tag installed."} />}
+            </Card>
             <Card title="Lead sources">
               <BreakdownList items={data.lead_sources} empty="Lead sources will appear as intake records are captured." />
             </Card>
@@ -156,7 +172,7 @@ export function Analytics({ businessId }: { businessId: string }) {
             </Card>
           </div>
 
-          <p className="data-boundary-note analytics-note">These numbers come from NTX intake, appointment, and missed-call records. Website traffic and Google Business Profile metrics are not included.</p>
+          <p className="data-boundary-note analytics-note">Lead, appointment, and missed-call metrics come from NTX records. Website traffic is read from the connected GA4 property after its website tag is installed.</p>
         </>
       )}
     </>

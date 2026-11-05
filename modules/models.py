@@ -10,6 +10,7 @@ Tables:
 """
 
 from datetime import datetime, timezone
+from uuid import uuid4
 
 from sqlalchemy import ForeignKey, String, Text, Integer, Boolean, DateTime, JSON, UniqueConstraint, Index
 from sqlalchemy.orm import Mapped, mapped_column
@@ -426,6 +427,47 @@ class BusinessModuleConfiguration(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False
     )
+
+
+class GoogleConnection(Base):
+    """One client-authorized Google connection per business.
+
+    The encrypted refresh token is intentionally never serialized to the
+    browser. Google assets stay in the client's account; disconnecting this
+    row only removes NTX's reporting access.
+    """
+
+    __tablename__ = "google_connections"
+    __table_args__ = (UniqueConstraint("business_id", name="uq_google_connections_business"),)
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    business_id: Mapped[str] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    connected_by_user_id: Mapped[str | None] = mapped_column(ForeignKey("platform_users.id", ondelete="SET NULL"), nullable=True)
+    connected_email: Mapped[str | None] = mapped_column(String(320), nullable=True)
+    encrypted_refresh_token: Mapped[str] = mapped_column(Text, nullable=False)
+    granted_scopes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    search_property: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    ga4_property: Mapped[str | None] = mapped_column(String(96), nullable=True)
+    ga4_measurement_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    profile_location: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    profile_url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, onupdate=_utcnow, nullable=False)
+
+
+class GoogleOAuthState(Base):
+    """Single-use OAuth state, bound to an authenticated user and business."""
+
+    __tablename__ = "google_oauth_states"
+    __table_args__ = (UniqueConstraint("state_hash", name="uq_google_oauth_states_hash"), Index("ix_google_oauth_states_expires", "expires_at"))
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid4()))
+    state_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    business_id: Mapped[str] = mapped_column(ForeignKey("businesses.id", ondelete="CASCADE"), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("platform_users.id", ondelete="CASCADE"), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_utcnow, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class CustomerMemory(Base):

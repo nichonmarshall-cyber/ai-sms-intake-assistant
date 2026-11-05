@@ -575,13 +575,15 @@ function BusinessDetail({ readOnly }: { readOnly: boolean }) {
         </form>
       </Card>
 
-      <Card title="Google visibility">
-        <p className="management-copy">Connect the exact Search Console property and verified Business Profile location for this tenant. Google credentials are configured on the server, never entered here.</p>
+      <Card title="Google reporting & analytics">
+        <p className="management-copy">The business owner connects their own Google account from Settings. Their Business Profile, Search Console, and GA4 property remain theirs; NTX only receives reporting access.</p>
+        <Link className="btn btn--primary" to={`/b/${businessId}/settings`}>Open client Google setup</Link>
+        <p className="form-hint">The fields below only support a legacy service-account migration. New clients should never be asked for internal Google location IDs.</p>
         <form className="inline-form-grid" onSubmit={saveGoogle} noValidate>
-          <Field label="Search Console property" id="search-property" error={googleErrors.search_property}><input id="search-property" className="input" value={searchProperty} placeholder="sc-domain:example.com" disabled={readOnly} onChange={(event) => setSearchProperty(event.target.value)} /></Field>
-          <Field label="Business Profile location" id="profile-location" error={googleErrors.profile_location}><input id="profile-location" className="input" value={profileLocation} placeholder="accounts/123/locations/456" disabled={readOnly} onChange={(event) => setProfileLocation(event.target.value)} /></Field>
+          <Field label="Legacy Search Console property" id="search-property" error={googleErrors.search_property}><input id="search-property" className="input" value={searchProperty} placeholder="sc-domain:example.com" disabled={readOnly} onChange={(event) => setSearchProperty(event.target.value)} /></Field>
+          <Field label="Legacy Business Profile location" id="profile-location" error={googleErrors.profile_location}><input id="profile-location" className="input" value={profileLocation} placeholder="accounts/123/locations/456" disabled={readOnly} onChange={(event) => setProfileLocation(event.target.value)} /></Field>
           <Field label="Google listing link" id="profile-url" error={googleErrors.profile_url}><input id="profile-url" className="input" value={profileUrl} placeholder="https://maps.google.com/..." disabled={readOnly} onChange={(event) => setProfileUrl(event.target.value)} /></Field>
-          <button className="btn btn--primary inline-form-grid__button" disabled={readOnly || saving === "google"}>Save Google settings</button>
+          <button className="btn inline-form-grid__button" disabled={readOnly || saving === "google"}>Save legacy settings</button>
         </form>
       </Card>
 

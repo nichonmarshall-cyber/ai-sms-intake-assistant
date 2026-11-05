@@ -1,5 +1,7 @@
 """Google reporting is entitled and mapped to the requested tenant."""
 
+from cryptography.fernet import Fernet
+
 from modules import entitlements, google_visibility
 from modules.db import session_scope
 from modules.models import Business
@@ -60,3 +62,24 @@ def test_unconnected_google_pages_show_no_fake_metrics(demo_app):
         body = client.get(f"/api/dashboard/businesses/{business.id}/{endpoint}").get_json()
         assert body["status"] == "not_connected"
         assert body["data"] is None
+
+
+def test_google_connect_requires_server_oauth_and_client_settings_are_tenant_scoped(demo_app, monkeypatch):
+    first = make_business()
+    second = make_business(name="Second", slug="second-google-connect")
+    owner = make_platform_user(email="google-connect-owner@test.com", password=PASSWORD, platform_role="none")
+    make_membership(first.id, owner.id, role="owner")
+    client, csrf, _ = login(demo_app, owner.email, PASSWORD)
+
+    missing = client.post(f"/api/google/businesses/{first.id}/connect", headers=auth_headers(csrf))
+    assert missing.status_code == 503
+
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_ID", "client-id")
+    monkeypatch.setenv("GOOGLE_OAUTH_CLIENT_SECRET", "client-secret")
+    monkeypatch.setenv("PUBLIC_BASE_URL", "https://app.example.test")
+    monkeypatch.setenv("GOOGLE_CONNECTION_ENCRYPTION_KEY", Fernet.generate_key().decode())
+    started = client.post(f"/api/google/businesses/{first.id}/connect", headers=auth_headers(csrf))
+    assert started.status_code == 200
+    assert "accounts.google.com" in started.get_json()["authorize_url"]
+    assert client.get(f"/api/google/businesses/{first.id}").get_json()["status"] == "not_connected"
+    assert client.get(f"/api/google/businesses/{second.id}").status_code == 403

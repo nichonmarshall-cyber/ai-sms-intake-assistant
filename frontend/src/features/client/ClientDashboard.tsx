@@ -63,6 +63,24 @@ interface OverviewPayload {
   unavailable: UnavailableMetric[];
 }
 
+interface GoogleConnection {
+  status: "connected" | "not_connected";
+  oauth_configured: boolean;
+  connected_email?: string | null;
+  search_property?: string;
+  ga4_property?: string;
+  ga4_measurement_id?: string;
+  profile_location?: string;
+  profile_url?: string;
+  updated_at?: string | null;
+}
+
+interface GoogleResources {
+  search_properties: string[];
+  ga4_properties: { id: string; name: string }[];
+  business_locations: { id: string; name: string; website_url: string }[];
+}
+
 interface LeadsPayload extends Paged<Lead> {
   statuses: LeadWorkflowStatus[];
 }
@@ -551,6 +569,16 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
   const [calendarError, setCalendarError] = useState<string | null>(null);
   const [calendarStatus, setCalendarStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [google, setGoogle] = useState<GoogleConnection | null>(null);
+  const [googleResources, setGoogleResources] = useState<GoogleResources | null>(null);
+  const [googleError, setGoogleError] = useState<string | null>(null);
+  const [googleStatus, setGoogleStatus] = useState<string | null>(null);
+  const [googleSaving, setGoogleSaving] = useState(false);
+  const [searchProperty, setSearchProperty] = useState("");
+  const [ga4Property, setGa4Property] = useState("");
+  const [measurementId, setMeasurementId] = useState("");
+  const [profileLocation, setProfileLocation] = useState("");
+  const [profileUrl, setProfileUrl] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -564,6 +592,20 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
       setCalendarId(payload.calendar.calendar_id);
       setTimezone(payload.calendar.timezone);
       setDuration(payload.calendar.default_duration_minutes);
+      const googleConnection = await api.get<GoogleConnection>(`/api/google/businesses/${businessId}`);
+      setGoogle(googleConnection);
+      setSearchProperty(googleConnection.search_property || "");
+      setGa4Property(googleConnection.ga4_property || "");
+      setMeasurementId(googleConnection.ga4_measurement_id || "");
+      setProfileLocation(googleConnection.profile_location || "");
+      setProfileUrl(googleConnection.profile_url || "");
+      if (googleConnection.status === "connected") {
+        try {
+          setGoogleResources(await api.get<GoogleResources>(`/api/google/businesses/${businessId}/resources`));
+        } catch (resourceError) {
+          setGoogleError(resourceError instanceof Error ? resourceError.message : "Could not load Google assets.");
+        }
+      }
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load settings.");
@@ -618,6 +660,51 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
     }
   };
 
+  const connectGoogle = async () => {
+    setGoogleError(null);
+    try {
+      const response = await api.post<{ authorize_url: string }>(`/api/google/businesses/${businessId}/connect`);
+      window.location.assign(response.authorize_url);
+    } catch (connectError) {
+      setGoogleError(connectError instanceof Error ? connectError.message : "Could not start Google Connect.");
+    }
+  };
+
+  const saveGoogle = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setGoogleError(null);
+    setGoogleStatus(null);
+    setGoogleSaving(true);
+    try {
+      const connection = await api.patch<GoogleConnection>(`/api/google/businesses/${businessId}/selection`, {
+        search_property: searchProperty,
+        ga4_property: ga4Property,
+        ga4_measurement_id: measurementId,
+        profile_location: profileLocation,
+        profile_url: profileUrl,
+      });
+      setGoogle(connection);
+      setGoogleStatus("Google assets saved. Your website must also have the GA4 tag installed before traffic begins collecting.");
+    } catch (saveError) {
+      setGoogleError(saveError instanceof Error ? saveError.message : "Could not save Google assets.");
+    } finally {
+      setGoogleSaving(false);
+    }
+  };
+
+  const disconnectGoogle = async () => {
+    if (!window.confirm("Disconnect Google? This removes NTX reporting access but never deletes the business's Google data.")) return;
+    setGoogleError(null);
+    try {
+      await api.delete(`/api/google/businesses/${businessId}`);
+      setGoogle({ status: "not_connected", oauth_configured: google?.oauth_configured ?? false });
+      setGoogleResources(null);
+      setGoogleStatus("Google disconnected. The business still owns all Google accounts and history.");
+    } catch (disconnectError) {
+      setGoogleError(disconnectError instanceof Error ? disconnectError.message : "Could not disconnect Google.");
+    }
+  };
+
   if (loading) return <Loading rows={4} />;
   if (error && !business) return <ErrorState body={error} />;
 
@@ -661,6 +748,56 @@ function Settings({ businessId, readOnly }: { businessId: string; readOnly: bool
       </Card>
 
       <div className="settings-section">
+        <Card title="Google reporting & website analytics">
+          <div className={google?.status === "connected" ? "calendar-banner calendar-banner--ok" : "calendar-banner calendar-banner--warn"}>
+            <span>{google?.status === "connected" ? "✓" : "!"}</span>
+            <strong>{google?.status === "connected" ? "Google connected" : "Not connected"}</strong>
+            <span>{google?.status === "connected" ? `Connected as ${google.connected_email || "business Google account"}. The business keeps ownership and can disconnect NTX at any time.` : google?.oauth_configured ? "Connect the Google account that owns this business profile, Search Console, and Analytics." : "NTX must finish the secure Google OAuth server setup before a client can connect."}</span>
+          </div>
+          {google?.status !== "connected" ? (
+            <div className="lead-detail__actions">
+              <button className="btn btn--primary" type="button" disabled={readOnly || !google?.oauth_configured} onClick={() => void connectGoogle()}>Connect Google</button>
+            </div>
+          ) : (
+            <form onSubmit={saveGoogle} noValidate>
+              <Field label="Search Console property" id="google-search-property">
+                <select id="google-search-property" className="input" disabled={readOnly} value={searchProperty} onChange={(event) => setSearchProperty(event.target.value)}>
+                  <option value="">Choose a Search Console property</option>
+                  {(googleResources?.search_properties || [searchProperty].filter(Boolean)).map((item) => <option value={item} key={item}>{item}</option>)}
+                </select>
+              </Field>
+              <Field label="GA4 property" id="google-ga4-property">
+                <select id="google-ga4-property" className="input" disabled={readOnly} value={ga4Property} onChange={(event) => setGa4Property(event.target.value)}>
+                  <option value="">Choose a GA4 property</option>
+                  {(googleResources?.ga4_properties || []).map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
+                </select>
+              </Field>
+              <Field label="GA4 Measurement ID" id="google-measurement-id">
+                <input id="google-measurement-id" className="input" disabled={readOnly} value={measurementId} placeholder="G-XXXXXXXXXX" onChange={(event) => setMeasurementId(event.target.value)} />
+              </Field>
+              <p className="data-boundary-note data-boundary-note--inside">Example: G-355KXMFY4P. This identifies the website tag; it does not add the tag to the website by itself.</p>
+              <Field label="Google Business Profile location" id="google-profile-location">
+                <select id="google-profile-location" className="input" disabled={readOnly} value={profileLocation} onChange={(event) => {
+                  const location = (googleResources?.business_locations || []).find((item) => item.id === event.target.value);
+                  setProfileLocation(event.target.value); if (location?.website_url && !profileUrl) setProfileUrl(location.website_url);
+                }}>
+                  <option value="">Choose a Business Profile location</option>
+                  {(googleResources?.business_locations || []).map((item) => <option value={item.id} key={item.id}>{item.name}</option>)}
+                </select>
+              </Field>
+              <Field label="Public Google listing link" id="google-listing-link">
+                <input id="google-listing-link" className="input" disabled={readOnly} value={profileUrl} placeholder="https://maps.app.goo.gl/..." onChange={(event) => setProfileUrl(event.target.value)} />
+              </Field>
+              {googleError && <p className="field__error" role="alert">{googleError}</p>}
+              {googleStatus && <p className="calendar-success" role="status">{googleStatus}</p>}
+              <div className="lead-detail__actions">
+                <button className="btn btn--primary" type="submit" disabled={readOnly || googleSaving}>{googleSaving ? "Saving…" : "Save Google reporting"}</button>
+                <button className="btn" type="button" disabled={readOnly} onClick={() => void disconnectGoogle()}>Disconnect Google</button>
+              </div>
+            </form>
+          )}
+          {google?.status !== "connected" && googleError && <p className="field__error" role="alert">{googleError}</p>}
+        </Card>
         <Card title="Google Calendar">
           <div className={calendar?.connected ? "calendar-banner calendar-banner--ok" : "calendar-banner calendar-banner--warn"}>
             <span>{calendar?.connected ? "✓" : "!"}</span>
